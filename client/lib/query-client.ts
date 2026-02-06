@@ -1,19 +1,28 @@
+import Constants from "expo-constants";
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 /**
- * Gets the base URL for the Express API server (e.g., "http://localhost:3000")
+ * Gets the base URL for the Express API server
  * @returns {string} The API base URL
  */
 export function getApiUrl(): string {
-  let host = process.env.EXPO_PUBLIC_DOMAIN;
-
-  if (!host) {
-    throw new Error("EXPO_PUBLIC_DOMAIN is not set");
+  // Check for Expo environment variable first
+  const host = process.env.EXPO_PUBLIC_DOMAIN;
+  
+  if (host) {
+    return host.startsWith("http") ? host : `https://${host}`;
   }
 
-  let url = new URL(`https://${host}`);
+  // Dynamic LAN IP detection for Expo Go
+  // Constants.expoConfig?.hostUri contains "192.168.x.x:8081"
+  const debuggerHost = Constants.expoConfig?.hostUri;
+  if (debuggerHost) {
+    const ip = debuggerHost.split(":")[0];
+    return `http://${ip}:5000`; // Backend port
+  }
 
-  return url.href;
+  // Fallback for local development (Web / Simulator)
+  return "http://localhost:5000";
 }
 
 async function throwIfResNotOk(res: Response) {

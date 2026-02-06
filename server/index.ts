@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
@@ -34,7 +35,14 @@ function setupCors(app: express.Application) {
       origin?.startsWith("http://localhost:") ||
       origin?.startsWith("http://127.0.0.1:");
 
-    if (origin && (origins.has(origin) || isLocalhost)) {
+    // Allow origins from local network (for mobile devices)
+    const isLocalNetwork = origin && (
+      origin.includes("http://192.168.") ||  // Common local network range
+      origin.includes("http://10.") ||       // Another common range
+      origin.includes("http://172.")         // Private network range
+    );
+
+    if (origin && (origins.has(origin) || isLocalhost || isLocalNetwork)) {
       res.header("Access-Control-Allow-Origin", origin);
       res.header(
         "Access-Control-Allow-Methods",
@@ -241,7 +249,6 @@ function setupErrorHandler(app: express.Application) {
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
     },
     () => {
       log(`express server serving on port ${port}`);

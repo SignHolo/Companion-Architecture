@@ -1,5 +1,5 @@
 import React from "react";
-import { StyleSheet, View, Image, Pressable } from "react-native";
+import { StyleSheet, View, Image, Pressable, AccessibilityInfo, Platform } from "react-native";
 import {
   createDrawerNavigator,
   DrawerContentScrollView,
@@ -29,9 +29,9 @@ function CustomDrawerContent(props: DrawerContentComponentProps) {
   const { state, navigation } = props;
 
   const menuItems = [
-    { name: "StoryGenerator", label: "Story Generator", icon: "book-open" as const },
-    { name: "APISettings", label: "API Settings", icon: "key" as const },
-    { name: "BehaviorPrompt", label: "Story Preferences", icon: "sliders" as const },
+    { name: "StoryGenerator", label: "AI Companion", icon: "message-circle" as const },
+    { name: "APISettings", label: "API Configuration", icon: "key" as const },
+    { name: "BehaviorPrompt", label: "Settings", icon: "settings" as const },
     { name: "About", label: "About", icon: "info" as const },
   ];
 
@@ -46,16 +46,22 @@ function CustomDrawerContent(props: DrawerContentComponentProps) {
           source={require("../../assets/images/icon.png")}
           style={styles.logo}
           resizeMode="contain"
+          accessible={true}
+          accessibilityLabel="AI Companion Logo"
         />
         <ThemedText
           style={[styles.appName, { fontFamily: "PlayfairDisplay_700Bold" }]}
+          accessible={true}
+          accessibilityRole="header"
         >
-          AI Storyteller
+          AI Companion
         </ThemedText>
         <ThemedText
           style={[styles.tagline, { color: theme.textSecondary }]}
+          accessible={true}
+          accessibilityHint="Your personal digital friend"
         >
-          Transform ideas into stories
+          Your personal digital friend
         </ThemedText>
       </View>
 
@@ -65,21 +71,35 @@ function CustomDrawerContent(props: DrawerContentComponentProps) {
           return (
             <Pressable
               key={item.name}
-              onPress={() => navigation.navigate(item.name)}
+              onPress={() => {
+                navigation.navigate(item.name);
+                // Close drawer after navigation for better UX
+                if (Platform.OS === 'android' || Platform.OS === 'ios') {
+                  AccessibilityInfo.announceForAccessibility(`Navigated to ${item.label}`);
+                }
+              }}
               style={({ pressed }) => [
                 styles.menuItem,
                 {
                   backgroundColor: isActive
                     ? theme.backgroundSecondary
-                    : "transparent",
+                    : pressed
+                      ? theme.backgroundTertiary
+                      : "transparent",
                   opacity: pressed ? 0.7 : 1,
                 },
               ]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isActive }}
+              accessibilityLabel={item.label}
+              accessibilityHint={`Navigate to ${item.label} screen`}
             >
               <Feather
                 name={item.icon}
                 size={20}
                 color={isActive ? theme.link : theme.textSecondary}
+                accessibilityElementsHidden={true}
+                importantForAccessibility="no-hide-descendants"
               />
               <ThemedText
                 style={[
@@ -98,7 +118,11 @@ function CustomDrawerContent(props: DrawerContentComponentProps) {
       </View>
 
       <View style={styles.footer}>
-        <ThemedText style={[styles.version, { color: theme.textSecondary }]}>
+        <ThemedText
+          style={[styles.version, { color: theme.textSecondary }]}
+          accessible={true}
+          accessibilityLabel="Application version 1.0.0"
+        >
           Version 1.0.0
         </ThemedText>
       </View>
@@ -123,10 +147,26 @@ export default function DrawerNavigator() {
         overlayColor: "rgba(0, 0, 0, 0.5)",
       }}
     >
-      <Drawer.Screen name="StoryGenerator" component={StoryGeneratorScreen} />
-      <Drawer.Screen name="APISettings" component={APISettingsScreen} />
-      <Drawer.Screen name="BehaviorPrompt" component={BehaviorPromptScreen} />
-      <Drawer.Screen name="About" component={AboutScreen} />
+      <Drawer.Screen
+        name="StoryGenerator"
+        component={StoryGeneratorScreen}
+        options={{ title: "AI Companion" }}
+      />
+      <Drawer.Screen
+        name="APISettings"
+        component={APISettingsScreen}
+        options={{ title: "API Configuration" }}
+      />
+      <Drawer.Screen
+        name="BehaviorPrompt"
+        component={BehaviorPromptScreen}
+        options={{ title: "Settings" }}
+      />
+      <Drawer.Screen
+        name="About"
+        component={AboutScreen}
+        options={{ title: "About" }}
+      />
     </Drawer.Navigator>
   );
 }

@@ -46,11 +46,11 @@ export const Spacing = {
   sm: 8,
   md: 12,
   lg: 16,
-  xl: 20,
-  "2xl": 24,
-  "3xl": 32,
-  "4xl": 40,
-  "5xl": 48,
+  xl: 24,
+  "2xl": 32,
+  "3xl": 40,
+  "4xl": 48,
+  "5xl": 56,
   inputHeight: 48,
   buttonHeight: 52,
 };
@@ -89,22 +89,37 @@ export const Typography = {
   },
   body: {
     fontSize: 16,
-    lineHeight: 24,
+    lineHeight: 26,
     fontWeight: "400" as const,
   },
   small: {
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 22,
     fontWeight: "400" as const,
   },
   link: {
     fontSize: 16,
-    lineHeight: 24,
-    fontWeight: "400" as const,
+    lineHeight: 26,
+    fontWeight: "500" as const,
   },
   caption: {
     fontSize: 13,
     lineHeight: 18,
+    fontWeight: "400" as const,
+  },
+  chatMessage: {
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: "400" as const,
+  },
+  chatTimestamp: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "400" as const,
+  },
+  inputPlaceholder: {
+    fontSize: 16,
+    lineHeight: 24,
     fontWeight: "400" as const,
   },
 };

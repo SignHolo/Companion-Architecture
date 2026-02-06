@@ -1,76 +1,86 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
-
-interface GenerateStoryRequest {
-  prompt: string;
-  apiKey: string;
-  systemPrompt: string;
-}
+import { handleTurn } from "./core/orchestrator.js";
+import { storage } from "./storage.js";
+import { insertSettingsSchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  app.post("/api/generate-story", async (req: Request, res: Response) => {
+  // Chat Endpoint
+  app.post("/api/chat", async (req: Request, res: Response) => {
     try {
-      const { prompt, apiKey, systemPrompt } = req.body as GenerateStoryRequest;
+      const { message } = req.body;
 
-      if (!prompt) {
-        return res.status(400).json({ error: "Prompt is required" });
+      if (!message) {
+        return res.status(400).json({ error: "Message is required" });
       }
 
-      if (!apiKey) {
-        return res.status(400).json({ error: "API key is required" });
+      // Check if API key exists
+      const settings = await storage.getSettings();
+      if (!settings.gemini_api_key) {
+        return res.status(401).json({ 
+          error: "Gemini API Key not configured. Please set it in settings." 
+        });
       }
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                role: "user",
-                parts: [
-                  {
-                    text: `${systemPrompt}\n\nUser's story prompt: ${prompt}`,
-                  },
-                ],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.9,
-              topK: 40,
-              topP: 0.95,
-              maxOutputTokens: 2048,
-            },
-          }),
-        }
-      );
+      // Process turn via Orchestrator
+      const response = await handleTurn(message);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        const errorMessage =
-          errorData.error?.message || "Failed to generate story";
-        return res.status(response.status).json({ error: errorMessage });
-      }
-
-      const data = await response.json();
-
-      const story =
-        data.candidates?.[0]?.content?.parts?.[0]?.text ||
-        "Unable to generate story. Please try again.";
-
-      return res.json({ story });
+      return res.json({ response });
     } catch (error) {
-      console.error("Story generation error:", error);
+      console.error("Chat error:", error);
       return res.status(500).json({
-        error: "An error occurred while generating the story. Please try again.",
+        error: "An error occurred while processing your message.",
       });
     }
   });
 
-  const httpServer = createServer(app);
+  // Settings Endpoint - Get All Settings
+  app.get("/api/settings", async (req: Request, res: Response) => {
+    try {
+      const settings = await storage.getSettings();
 
+      // Return masked keys
+      const maskedGemini = settings.gemini_api_key 
+        ? `${settings.gemini_api_key.substring(0, 4)}...${settings.gemini_api_key.substring(settings.gemini_api_key.length - 4)}` 
+        : "";
+
+      return res.json({ 
+        ...settings,
+        gemini_api_key: maskedGemini,
+        openai_api_key: settings.openai_api_key ? "configured" : "" 
+      });
+    } catch (error) {
+      console.error("Settings get error:", error);
+      return res.status(500).json({ error: "Failed to retrieve settings" });
+    }
+  });
+
+  // Settings Endpoint - Update Settings
+  app.post("/api/settings", async (req: Request, res: Response) => {
+    try {
+      const updateData = { ...req.body };
+      
+      const updated = await storage.updateSettings(updateData);
+      return res.json({ success: true });
+    } catch (error) {
+      console.error("Settings update error:", error);
+      return res.status(500).json({ error: "Failed to update settings" });
+    }
+  });
+
+  // Chat History Endpoint
+  app.get("/api/messages", async (req: Request, res: Response) => {
+    try {
+      const messages = await storage.getRecentChatMessages(50);
+      // Reverse to chronological order (oldest first)
+      const reversedMessages = messages.reverse();
+      return res.json({ messages: reversedMessages });
+    } catch (error) {
+      console.error("Chat history error:", error);
+      return res.status(500).json({ error: "Failed to fetch chat history" });
+    }
+  });
+
+  const httpServer = createServer(app);
   return httpServer;
 }

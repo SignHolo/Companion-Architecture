@@ -6,6 +6,7 @@ import {
   Pressable,
   ActivityIndicator,
   Platform,
+  ScrollView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -17,66 +18,119 @@ import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { useTheme } from "@/hooks/useTheme";
-import { useSettings } from "@/context/SettingsContext";
 import { Spacing, BorderRadius, Shadows } from "@/constants/theme";
 import { DrawerParamList } from "@/navigation/DrawerNavigator";
+import { apiRequest } from "@/lib/query-client";
 
 type Props = {
   navigation: DrawerNavigationProp<DrawerParamList, "BehaviorPrompt">;
 };
 
-const PRESETS = [
-  {
-    name: "Fantasy",
-    icon: "sunrise" as const,
-    prompt:
-      "You are a fantasy storyteller specializing in magical worlds, mythical creatures, and epic adventures. Create stories with rich worldbuilding, enchanting settings, and heroic journeys. Include elements like magic, dragons, elves, or other fantastical beings.",
-  },
-  {
-    name: "Mystery",
-    icon: "search" as const,
-    prompt:
-      "You are a mystery writer crafting suspenseful tales with twists and turns. Create stories with intriguing puzzles, suspicious characters, and satisfying revelations. Build tension gradually and keep readers guessing until the end.",
-  },
-  {
-    name: "Sci-Fi",
-    icon: "zap" as const,
-    prompt:
-      "You are a science fiction author exploring futuristic worlds and advanced technology. Create stories set in space, featuring AI, time travel, or alien civilizations. Blend scientific concepts with compelling human drama.",
-  },
-  {
-    name: "Romance",
-    icon: "heart" as const,
-    prompt:
-      "You are a romance writer creating heartfelt love stories. Focus on emotional connections, character development, and the journey of relationships. Include tender moments, meaningful dialogue, and satisfying emotional arcs.",
-  },
-];
+type Tab = "core" | "personality" | "appearance" | "persona";
 
-export default function BehaviorPromptScreen({ navigation }: Props) {
+interface SettingsState {
+  system_core: string;
+  companion_personality: {
+    name: string;
+    tone: string;
+    traits: string[];
+  };
+  companion_appearance: string;
+  user_persona: {
+    name: string;
+    preferences: string[];
+  };
+}
+
+export default function SettingsScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
-  const { behaviorPrompt, setBehaviorPrompt, isLoading } = useSettings();
-  const [inputValue, setInputValue] = useState("");
+  const [activeTab, setActiveTab] = useState<Tab>("core");
+  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
+
+  // Form State
+  const [settings, setSettings] = useState<SettingsState>({
+    system_core: "",
+    companion_personality: { name: "", tone: "", traits: [] },
+    companion_appearance: "",
+    user_persona: { name: "", preferences: [] },
+  });
+
+  // Temporary text areas for array fields
+  const [traitsText, setTraitsText] = useState("");
+  const [preferencesText, setPreferencesText] = useState("");
 
   useEffect(() => {
-    setInputValue(behaviorPrompt);
-    const matchingPreset = PRESETS.find((p) => p.prompt === behaviorPrompt);
-    setSelectedPreset(matchingPreset?.name || null);
-  }, [behaviorPrompt]);
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    setIsLoading(true);
+    try {
+      const response = await apiRequest("GET", "/api/settings");
+      if (response.ok) {
+        const data = await response.json();
+        
+        let personality = { name: "", tone: "", traits: [] };
+        try {
+          personality = JSON.parse(data.companion_personality || "{}");
+        } catch (e) {}
+
+        let persona = { name: "", preferences: [] };
+        try {
+          persona = JSON.parse(data.user_persona || "{}");
+        } catch (e) {}
+
+        setSettings({
+          system_core: data.system_core || "",
+          companion_personality: personality,
+          companion_appearance: data.companion_appearance || "",
+          user_persona: persona,
+        });
+
+        setTraitsText(Array.isArray(personality.traits) ? personality.traits.join("\n") : "");
+        setPreferencesText(Array.isArray(persona.preferences) ? persona.preferences.join("\n") : "");
+      }
+    } catch (error) {
+      console.error("Failed to fetch settings", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSave = async () => {
     setIsSaving(true);
+    setSaveResult(null);
+
     try {
-      await setBehaviorPrompt(inputValue.trim());
-      setSaveResult({ success: true, message: "Preferences saved successfully" });
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Prepare payload
+      const payload = {
+        system_core: settings.system_core,
+        companion_personality: JSON.stringify({
+          ...settings.companion_personality,
+          traits: traitsText.split("\n").filter(t => t.trim().length > 0),
+        }),
+        companion_appearance: settings.companion_appearance,
+        user_persona: JSON.stringify({
+          ...settings.user_persona,
+          preferences: preferencesText.split("\n").filter(p => p.trim().length > 0),
+        }),
+      };
+
+      const response = await apiRequest("POST", "/api/settings", payload);
+
+      if (response.ok) {
+        setSaveResult({ success: true, message: "Settings saved successfully" });
+        if (Platform.OS !== "web") {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      } else {
+        throw new Error("Failed to save");
       }
     } catch (error) {
-      setSaveResult({ success: false, message: "Failed to save preferences" });
+      setSaveResult({ success: false, message: "Failed to save settings" });
       if (Platform.OS !== "web") {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
@@ -85,12 +139,189 @@ export default function BehaviorPromptScreen({ navigation }: Props) {
     }
   };
 
-  const handlePresetSelect = (preset: typeof PRESETS[0]) => {
-    setInputValue(preset.prompt);
-    setSelectedPreset(preset.name);
-    setSaveResult(null);
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const renderTabs = () => (
+    <View style={styles.tabContainer}>
+      {(["core", "personality", "appearance", "persona"] as Tab[]).map((tab) => (
+        <Pressable
+          key={tab}
+          onPress={() => {
+            setActiveTab(tab);
+            setSaveResult(null);
+          }}
+          style={({ pressed }) => [
+            styles.tab,
+            {
+              backgroundColor: activeTab === tab ? theme.link : "transparent",
+              opacity: pressed ? 0.8 : 1,
+            },
+          ]}
+        >
+          <ThemedText
+            style={[ 
+              styles.tabText,
+              {
+                color: activeTab === tab ? "#FFF" : theme.textSecondary,
+                fontFamily: activeTab === tab ? "Inter_600SemiBold" : "Inter_500Medium",
+                fontSize: 12, // Reduced font size to fit 4 tabs
+              },
+            ]}
+          >
+            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+          </ThemedText>
+        </Pressable>
+      ))}
+    </View>
+  );
+
+  const renderContent = () => {
+    if (activeTab === "core") {
+      return (
+        <View style={styles.section}>
+          <ThemedText style={[styles.label, { color: theme.textSecondary }]}>
+            System Core Instructions (Fixed Logic)
+          </ThemedText>
+          <TextInput
+            style={[ 
+              styles.textArea,
+              {
+                backgroundColor: theme.inputBackground,
+                borderColor: theme.border,
+                color: theme.text,
+                minHeight: 200,
+              },
+            ]}
+            value={settings.system_core}
+            onChangeText={(text) => setSettings({ ...settings, system_core: text })}
+            multiline
+            textAlignVertical="top"
+            placeholder="Define the core identity and unshakeable rules..."
+            placeholderTextColor={theme.textSecondary}
+          />
+        </View>
+      );
+    }
+
+    if (activeTab === "personality") {
+      return (
+        <View style={styles.section}>
+          <ThemedText style={[styles.label, { color: theme.textSecondary }]}>Name</ThemedText>
+          <TextInput
+            style={[styles.input, { backgroundColor: theme.inputBackground, borderColor: theme.border, color: theme.text }]}
+            value={settings.companion_personality.name}
+            onChangeText={(text) =>
+              setSettings({
+                ...settings,
+                companion_personality: { ...settings.companion_personality, name: text },
+              })
+            }
+            placeholder="Companion Name"
+            placeholderTextColor={theme.textSecondary}
+          />
+
+          <ThemedText style={[styles.label, { color: theme.textSecondary }]}>Tone</ThemedText>
+          <TextInput
+            style={[styles.input, { backgroundColor: theme.inputBackground, borderColor: theme.border, color: theme.text }]}
+            value={settings.companion_personality.tone}
+            onChangeText={(text) =>
+              setSettings({
+                ...settings,
+                companion_personality: { ...settings.companion_personality, tone: text },
+              })
+            }
+            placeholder="e.g. Warm, Sarcastic, Professional"
+            placeholderTextColor={theme.textSecondary}
+          />
+
+          <ThemedText style={[styles.label, { color: theme.textSecondary }]}>
+            Traits (One per line)
+          </ThemedText>
+          <TextInput
+            style={[ 
+              styles.textArea,
+              {
+                backgroundColor: theme.inputBackground,
+                borderColor: theme.border,
+                color: theme.text,
+                minHeight: 150,
+              },
+            ]}
+            value={traitsText}
+            onChangeText={setTraitsText}
+            multiline
+            textAlignVertical="top"
+            placeholder="e.g. Speaks gently&#10;Uses emojis&#10;Never judges"
+            placeholderTextColor={theme.textSecondary}
+          />
+        </View>
+      );
+    }
+
+    if (activeTab === "appearance") {
+      return (
+        <View style={styles.section}>
+          <ThemedText style={[styles.label, { color: theme.textSecondary }]}>
+            Visual Description
+          </ThemedText>
+          <TextInput
+            style={[ 
+              styles.textArea,
+              {
+                backgroundColor: theme.inputBackground,
+                borderColor: theme.border,
+                color: theme.text,
+                minHeight: 200,
+              },
+            ]}
+            value={settings.companion_appearance}
+            onChangeText={(text) => setSettings({ ...settings, companion_appearance: text })}
+            multiline
+            textAlignVertical="top"
+            placeholder="Describe how the companion looks (e.g., hair color, style, clothing, vibe)..."
+            placeholderTextColor={theme.textSecondary}
+          />
+        </View>
+      );
+    }
+
+    if (activeTab === "persona") {
+      return (
+        <View style={styles.section}>
+          <ThemedText style={[styles.label, { color: theme.textSecondary }]}>User Name</ThemedText>
+          <TextInput
+            style={[styles.input, { backgroundColor: theme.inputBackground, borderColor: theme.border, color: theme.text }]}
+            value={settings.user_persona.name}
+            onChangeText={(text) =>
+              setSettings({
+                ...settings,
+                user_persona: { ...settings.user_persona, name: text },
+              })
+            }
+            placeholder="Your Name"
+            placeholderTextColor={theme.textSecondary}
+          />
+
+          <ThemedText style={[styles.label, { color: theme.textSecondary }]}>
+            Preferences & Facts (One per line)
+          </ThemedText>
+          <TextInput
+            style={[ 
+              styles.textArea,
+              {
+                backgroundColor: theme.inputBackground,
+                borderColor: theme.border,
+                color: theme.text,
+                minHeight: 150,
+              },
+            ]}
+            value={preferencesText}
+            onChangeText={setPreferencesText}
+            multiline
+            textAlignVertical="top"
+            placeholder="e.g. Likes sci-fi&#10;Hates broccoli&#10;Works as a designer"
+            placeholderTextColor={theme.textSecondary}
+          />
+        </View>
+      );
     }
   };
 
@@ -105,7 +336,7 @@ export default function BehaviorPromptScreen({ navigation }: Props) {
   return (
     <ThemedView style={styles.container}>
       <View
-        style={[
+        style={[ 
           styles.header,
           {
             paddingTop: insets.top + Spacing.md,
@@ -124,71 +355,27 @@ export default function BehaviorPromptScreen({ navigation }: Props) {
         </Pressable>
 
         <ThemedText
-          style={[styles.headerTitle, { fontFamily: "PlayfairDisplay_600SemiBold" }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          style={[styles.headerTitle, { fontFamily: "PlayfairDisplay_600SemiBold", flex: 1, textAlign: "center" }]}
         >
-          Story Preferences
+          Settings
         </ThemedText>
 
         <View style={styles.headerButton} />
       </View>
 
+      <View style={styles.tabsWrapper}>{renderTabs()}</View>
+
       <KeyboardAwareScrollViewCompat
         style={styles.scrollView}
-        contentContainerStyle={[
+        contentContainerStyle={[ 
           styles.scrollContent,
           { paddingBottom: insets.bottom + Spacing.xl },
         ]}
       >
-        <ThemedText style={[styles.sectionTitle, { fontFamily: "Inter_600SemiBold" }]}>
-          Quick Presets
-        </ThemedText>
-        <ThemedText style={[styles.sectionDescription, { color: theme.textSecondary }]}>
-          Choose a storytelling style or customize your own below
-        </ThemedText>
-
-        <View style={styles.presetsGrid}>
-          {PRESETS.map((preset) => (
-            <Pressable
-              key={preset.name}
-              onPress={() => handlePresetSelect(preset)}
-              style={({ pressed }) => [
-                styles.presetButton,
-                {
-                  backgroundColor:
-                    selectedPreset === preset.name
-                      ? theme.link
-                      : theme.backgroundDefault,
-                  borderColor:
-                    selectedPreset === preset.name ? theme.link : theme.cardBorder,
-                  opacity: pressed ? 0.9 : 1,
-                  transform: [{ scale: pressed ? 0.98 : 1 }],
-                },
-              ]}
-              testID={`button-preset-${preset.name.toLowerCase()}`}
-            >
-              <Feather
-                name={preset.icon}
-                size={22}
-                color={selectedPreset === preset.name ? theme.buttonText : theme.link}
-              />
-              <ThemedText
-                style={[
-                  styles.presetText,
-                  {
-                    color:
-                      selectedPreset === preset.name ? theme.buttonText : theme.text,
-                    fontFamily: "Inter_500Medium",
-                  },
-                ]}
-              >
-                {preset.name}
-              </ThemedText>
-            </Pressable>
-          ))}
-        </View>
-
         <View
-          style={[
+          style={[ 
             styles.card,
             {
               backgroundColor: theme.backgroundDefault,
@@ -196,48 +383,12 @@ export default function BehaviorPromptScreen({ navigation }: Props) {
             },
           ]}
         >
-          <View style={styles.cardHeader}>
-            <Feather name="edit-3" size={20} color={theme.link} />
-            <ThemedText
-              style={[styles.cardTitle, { fontFamily: "Inter_600SemiBold" }]}
-            >
-              Custom System Prompt
-            </ThemedText>
-          </View>
-
-          <ThemedText style={[styles.description, { color: theme.textSecondary }]}>
-            Customize how the AI tells your stories. Be specific about tone, style,
-            length, and any elements you want included.
-          </ThemedText>
-
-          <TextInput
-            style={[
-              styles.textArea,
-              {
-                backgroundColor: theme.inputBackground,
-                borderColor: theme.border,
-                color: theme.text,
-                fontFamily: "Inter_400Regular",
-              },
-            ]}
-            placeholder="Enter your custom storytelling instructions..."
-            placeholderTextColor={theme.textSecondary}
-            value={inputValue}
-            onChangeText={(text) => {
-              setInputValue(text);
-              setSelectedPreset(null);
-              setSaveResult(null);
-            }}
-            multiline
-            numberOfLines={8}
-            textAlignVertical="top"
-            testID="input-behavior-prompt"
-          />
+          {renderContent()}
 
           {saveResult ? (
             <Animated.View
               entering={FadeIn.duration(200)}
-              style={[
+              style={[ 
                 styles.resultContainer,
                 {
                   backgroundColor: saveResult.success
@@ -252,7 +403,7 @@ export default function BehaviorPromptScreen({ navigation }: Props) {
                 color={saveResult.success ? theme.success : theme.error}
               />
               <ThemedText
-                style={[
+                style={[ 
                   styles.resultText,
                   { color: saveResult.success ? theme.success : theme.error },
                 ]}
@@ -264,16 +415,15 @@ export default function BehaviorPromptScreen({ navigation }: Props) {
 
           <Pressable
             onPress={handleSave}
-            disabled={isSaving || !inputValue.trim()}
+            disabled={isSaving}
             style={({ pressed }) => [
               styles.saveButton,
               {
                 backgroundColor: theme.link,
-                opacity: pressed ? 0.9 : isSaving || !inputValue.trim() ? 0.5 : 1,
+                opacity: pressed ? 0.9 : isSaving ? 0.5 : 1,
               },
               Shadows.button,
             ]}
-            testID="button-save"
           >
             {isSaving ? (
               <ActivityIndicator size="small" color={theme.buttonText} />
@@ -281,12 +431,12 @@ export default function BehaviorPromptScreen({ navigation }: Props) {
               <Feather name="save" size={18} color={theme.buttonText} />
             )}
             <ThemedText
-              style={[
+              style={[ 
                 styles.saveButtonText,
                 { color: theme.buttonText, fontFamily: "Inter_600SemiBold" },
               ]}
             >
-              Save Preferences
+              Save Changes
             </ThemedText>
           </Pressable>
         </View>
@@ -319,65 +469,58 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
   },
+  tabsWrapper: {
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.md,
+  },
+  tabContainer: {
+    flexDirection: "row",
+    backgroundColor: "rgba(0,0,0,0.05)",
+    borderRadius: BorderRadius.md,
+    padding: 4,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: Spacing.sm,
+    alignItems: "center",
+    borderRadius: BorderRadius.sm,
+  },
+  tabText: {
+    fontSize: 14,
+  },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     padding: Spacing.lg,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    marginBottom: Spacing.xs,
-  },
-  sectionDescription: {
-    fontSize: 14,
-    marginBottom: Spacing.lg,
-  },
-  presetsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: Spacing.sm,
-    marginBottom: Spacing.xl,
-  },
-  presetButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    gap: Spacing.sm,
-  },
-  presetText: {
-    fontSize: 14,
+    paddingTop: 0,
   },
   card: {
     borderRadius: BorderRadius.md,
     borderWidth: 1,
     padding: Spacing.xl,
   },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: Spacing.md,
-    gap: Spacing.sm,
-  },
-  cardTitle: {
-    fontSize: 16,
-  },
-  description: {
-    fontSize: 14,
-    lineHeight: 22,
+  section: {
     marginBottom: Spacing.lg,
+  },
+  label: {
+    fontSize: 14,
+    marginBottom: Spacing.xs,
+    marginTop: Spacing.md,
+  },
+  input: {
+    height: 48,
+    borderRadius: BorderRadius.xs,
+    borderWidth: 1,
+    paddingHorizontal: Spacing.md,
+    fontSize: 15,
   },
   textArea: {
     borderRadius: BorderRadius.xs,
     borderWidth: 1,
-    padding: Spacing.lg,
+    padding: Spacing.md,
     fontSize: 15,
     lineHeight: 24,
-    minHeight: 160,
-    marginBottom: Spacing.lg,
   },
   resultContainer: {
     flexDirection: "row",
@@ -398,6 +541,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.lg,
     borderRadius: BorderRadius.xs,
     gap: Spacing.sm,
+    marginTop: Spacing.md,
   },
   saveButtonText: {
     fontSize: 16,

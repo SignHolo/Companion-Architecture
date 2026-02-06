@@ -6,6 +6,7 @@ import {
   Pressable,
   ActivityIndicator,
   Platform,
+  TouchableOpacity,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -20,6 +21,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useSettings } from "@/context/SettingsContext";
 import { Spacing, BorderRadius, Shadows } from "@/constants/theme";
 import { DrawerParamList } from "@/navigation/DrawerNavigator";
+import { apiRequest } from "@/lib/query-client";
 
 type Props = {
   navigation: DrawerNavigationProp<DrawerParamList, "APISettings">;
@@ -34,20 +36,43 @@ export default function APISettingsScreen({ navigation }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
     setInputValue(apiKey);
   }, [apiKey]);
 
+  // Validate API key format
+  const validateApiKey = (key: string): boolean => {
+    if (!key.trim()) {
+      setValidationError("API key is required");
+      return false;
+    }
+
+    setValidationError(null);
+    return true;
+  };
+
   const handleSave = async () => {
+    if (!validateApiKey(inputValue)) return;
+
     setIsSaving(true);
     try {
+      // 1. Save to Backend using apiRequest helper (handles Base URL)
+      await apiRequest("POST", "/api/settings", {
+        gemini_api_key: inputValue.trim(),
+        gemini_model: "gemini-3-pro-preview",
+      });
+      // 2. Update Local Context (Legacy/UI sync)
       await setApiKey(inputValue.trim());
+
       setTestResult({ success: true, message: "API key saved successfully" });
+      setValidationError(null);
       if (Platform.OS !== "web") {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } catch (error) {
+      console.error(error);
       setTestResult({ success: false, message: "Failed to save API key" });
       if (Platform.OS !== "web") {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -58,10 +83,7 @@ export default function APISettingsScreen({ navigation }: Props) {
   };
 
   const handleTest = async () => {
-    if (!inputValue.trim()) {
-      setTestResult({ success: false, message: "Please enter an API key first" });
-      return;
-    }
+    if (!validateApiKey(inputValue)) return;
 
     setIsTesting(true);
     setTestResult(null);
@@ -96,6 +118,19 @@ export default function APISettingsScreen({ navigation }: Props) {
     }
   };
 
+  // Handle input changes with real-time validation
+  const handleInputChange = (text: string) => {
+    setInputValue(text);
+    setTestResult(null);
+
+    // Clear validation error if user is typing
+    if (text.length > 0) {
+      validateApiKey(text);
+    } else {
+      setValidationError(null);
+    }
+  };
+
   if (isLoading) {
     return (
       <ThemedView style={[styles.container, styles.loadingContainer]}>
@@ -115,18 +150,18 @@ export default function APISettingsScreen({ navigation }: Props) {
           },
         ]}
       >
-        <Pressable
+        <TouchableOpacity
           onPress={() => navigation.openDrawer()}
-          style={({ pressed }) => [
-            styles.headerButton,
-            { opacity: pressed ? 0.7 : 1 },
-          ]}
+          style={styles.headerButton}
+          activeOpacity={0.7}
         >
           <Feather name="menu" size={24} color={theme.text} />
-        </Pressable>
+        </TouchableOpacity>
 
         <ThemedText
-          style={[styles.headerTitle, { fontFamily: "PlayfairDisplay_600SemiBold" }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          style={[styles.headerTitle, { fontFamily: "PlayfairDisplay_600SemiBold", flex: 1, textAlign: "center" }]}
         >
           API Configuration
         </ThemedText>
@@ -168,9 +203,9 @@ export default function APISettingsScreen({ navigation }: Props) {
             <TextInput
               style={[
                 styles.input,
+                validationError && { borderColor: theme.error },
                 {
                   backgroundColor: theme.inputBackground,
-                  borderColor: theme.border,
                   color: theme.text,
                   fontFamily: "Inter_400Regular",
                 },
@@ -178,29 +213,50 @@ export default function APISettingsScreen({ navigation }: Props) {
               placeholder="Enter your API key"
               placeholderTextColor={theme.textSecondary}
               value={inputValue}
-              onChangeText={(text) => {
-                setInputValue(text);
-                setTestResult(null);
-              }}
+              onChangeText={handleInputChange}
               secureTextEntry={!showKey}
               autoCapitalize="none"
               autoCorrect={false}
               testID="input-api-key"
             />
-            <Pressable
+            <TouchableOpacity
               onPress={() => setShowKey(!showKey)}
-              style={({ pressed }) => [
-                styles.eyeButton,
-                { opacity: pressed ? 0.7 : 1 },
-              ]}
+              style={styles.eyeButton}
+              activeOpacity={0.7}
             >
               <Feather
                 name={showKey ? "eye-off" : "eye"}
                 size={20}
                 color={theme.textSecondary}
               />
-            </Pressable>
+            </TouchableOpacity>
           </View>
+
+          {validationError && (
+            <Animated.View
+              entering={FadeIn.duration(200)}
+              style={[
+                styles.validationErrorContainer,
+                {
+                  backgroundColor: `${theme.error}15`,
+                },
+              ]}
+            >
+              <Feather
+                name="alert-circle"
+                size={18}
+                color={theme.error}
+              />
+              <ThemedText
+                style={[
+                  styles.validationErrorText,
+                  { color: theme.error },
+                ]}
+              >
+                {validationError}
+              </ThemedText>
+            </Animated.View>
+          )}
 
           {testResult ? (
             <Animated.View
@@ -231,16 +287,17 @@ export default function APISettingsScreen({ navigation }: Props) {
           ) : null}
 
           <View style={styles.buttonRow}>
-            <Pressable
+            <TouchableOpacity
               onPress={handleTest}
-              disabled={isTesting || !inputValue.trim()}
-              style={({ pressed }) => [
+              disabled={isTesting || !inputValue.trim() || !!validationError}
+              style={[
                 styles.secondaryButton,
                 {
                   borderColor: theme.link,
-                  opacity: pressed ? 0.8 : isTesting || !inputValue.trim() ? 0.5 : 1,
+                  opacity: isTesting || !inputValue.trim() || !!validationError ? 0.5 : 1,
                 },
               ]}
+              activeOpacity={0.7}
               testID="button-test"
             >
               {isTesting ? (
@@ -251,19 +308,20 @@ export default function APISettingsScreen({ navigation }: Props) {
               <ThemedText style={[styles.secondaryButtonText, { color: theme.link }]}>
                 Test Connection
               </ThemedText>
-            </Pressable>
+            </TouchableOpacity>
 
-            <Pressable
+            <TouchableOpacity
               onPress={handleSave}
-              disabled={isSaving || !inputValue.trim()}
-              style={({ pressed }) => [
+              disabled={isSaving || !inputValue.trim() || !!validationError}
+              style={[
                 styles.primaryButton,
                 {
                   backgroundColor: theme.link,
-                  opacity: pressed ? 0.9 : isSaving || !inputValue.trim() ? 0.5 : 1,
+                  opacity: isSaving || !inputValue.trim() || !!validationError ? 0.5 : 1,
                 },
                 Shadows.button,
               ]}
+              activeOpacity={0.7}
               testID="button-save"
             >
               {isSaving ? (
@@ -276,7 +334,7 @@ export default function APISettingsScreen({ navigation }: Props) {
               >
                 Save Key
               </ThemedText>
-            </Pressable>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -378,6 +436,18 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: "center",
     paddingHorizontal: Spacing.sm,
+  },
+  validationErrorContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: Spacing.md,
+    borderRadius: BorderRadius.xs,
+    marginBottom: Spacing.md,
+    gap: Spacing.sm,
+  },
+  validationErrorText: {
+    fontSize: 14,
+    flex: 1,
   },
   resultContainer: {
     flexDirection: "row",

@@ -3,357 +3,479 @@ import {
   StyleSheet,
   View,
   TextInput,
-  Image,
   Pressable,
   ActivityIndicator,
-  ScrollView,
+  FlatList,
   Platform,
+  KeyboardAvoidingView,
+  TouchableOpacity,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import * as Clipboard from "expo-clipboard";
 import { DrawerNavigationProp } from "@react-navigation/drawer";
 import Animated, {
-  FadeIn,
   FadeInUp,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-  withSequence,
+  FadeOutDown,
+  Layout,
+  ZoomInEasyUp,
+  ZoomOutEasyDown,
 } from "react-native-reanimated";
 
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
+import { Skeleton } from "@/components/Skeleton";
+import { TouchableScale } from "@/components/MicroInteractions";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { useTheme } from "@/hooks/useTheme";
-import { useSettings } from "@/context/SettingsContext";
 import { Spacing, BorderRadius, Shadows } from "@/constants/theme";
 import { apiRequest } from "@/lib/query-client";
 import { DrawerParamList } from "@/navigation/DrawerNavigator";
+import { formatTime } from "@/lib/utils";
 
 type Props = {
   navigation: DrawerNavigationProp<DrawerParamList, "StoryGenerator">;
 };
 
-export default function StoryGeneratorScreen({ navigation }: Props) {
+interface Message {
+  id: string;
+  role: "user" | "companion";
+  text: string;
+  timestamp: number;
+}
+
+export default function ChatScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
-  const { apiKey, behaviorPrompt } = useSettings();
-  const [prompt, setPrompt] = useState("");
-  const [story, setStory] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState("");
-  const scrollViewRef = useRef<ScrollView>(null);
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isSending, setIsSending] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); // Add loading state
+  const scrollViewRef = useRef<any>(null); // Reference for KeyboardAwareScrollViewCompat
 
-  const pulseOpacity = useSharedValue(1);
+  // Get dynamic styles based on theme
+  const styles = getStyles(theme);
 
   useEffect(() => {
-    if (isGenerating) {
-      pulseOpacity.value = withRepeat(
-        withSequence(
-          withTiming(0.4, { duration: 800 }),
-          withTiming(1, { duration: 800 })
-        ),
-        -1,
-        true
-      );
-    } else {
-      pulseOpacity.value = 1;
+    fetchMessages();
+  }, []);
+
+  useEffect(() => {
+    // Scroll to bottom when messages change
+    if (scrollViewRef.current) {
+      // Use a delay to ensure the content has been rendered
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     }
-  }, [isGenerating]);
+  }, [messages]);
 
-  const loadingStyle = useAnimatedStyle(() => ({
-    opacity: pulseOpacity.value,
-  }));
-
-  const handleGenerate = async () => {
-    if (!prompt.trim()) {
-      setError("Please enter a story prompt");
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      }
-      return;
-    }
-
-    if (!apiKey) {
-      setError("Please set your Gemini API key in the drawer menu");
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      }
-      return;
-    }
-
-    setError("");
-    setIsGenerating(true);
-    setStory("");
-
+  const fetchMessages = async () => {
+    setIsLoading(true); // Set loading state when fetching
     try {
-      const response = await apiRequest("POST", "/api/generate-story", {
-        prompt: prompt.trim(),
-        apiKey,
-        systemPrompt: behaviorPrompt,
-      });
+      const response = await apiRequest("GET", "/api/messages");
+      if (response.ok) {
+        const data = await response.json();
+        const loadedMessages = data.messages.map((m: any) => ({
+          id: m.id.toString(),
+          role: m.role, // "user" | "assistant" -> map to "user" | "companion"
+          text: m.content,
+          timestamp: new Date(m.created_at).getTime(),
+        }));
 
-      const data = await response.json();
-      setStory(data.story);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Map role 'assistant'/'model' to 'companion' for UI logic
+        const uiMessages = loadedMessages.map((m: any) => ({
+            ...m,
+            role: (m.role === 'user' ? 'user' : 'companion')
+        }));
+
+        setMessages(uiMessages);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to generate story";
-      setError(message);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      }
+    } catch (error) {
+      console.error("Failed to load chat history", error);
     } finally {
-      setIsGenerating(false);
+      setIsLoading(false); // Stop loading regardless of success or failure
     }
   };
 
-  const handleCopy = async () => {
-    if (story) {
-      await Clipboard.setStringAsync(story);
-      if (Platform.OS !== "web") {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
-    }
-  };
+  const handleSend = async () => {
+    if (!input.trim() || isSending) return;
 
-  const handleClear = () => {
-    setStory("");
-    setPrompt("");
-    setError("");
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      text: input.trim(),
+      timestamp: Date.now(),
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    setInput("");
+    setIsSending(true);
+
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
+
+    try {
+      const response = await apiRequest("POST", "/api/chat", {
+        message: userMsg.text,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+            throw new Error("Please configure API Key in settings.");
+        }
+        throw new Error("Failed to send message");
+      }
+
+      const data = await response.json();
+
+      const companionMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "companion",
+        text: data.response,
+        timestamp: Date.now(),
+      };
+
+      setMessages((prev) => [...prev, companionMsg]);
+
+      if (Platform.OS !== "web") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (error: any) {
+      const errorMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "companion",
+        text: `Error: ${error.message || "Something went wrong."}`,
+        timestamp: Date.now(),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setIsSending(false);
+    }
   };
 
+  useEffect(() => {
+    // Scroll to bottom when messages change
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  }, [messages]);
+
+  const renderMessage = ({ item }: { item: Message }) => {
+    const isUser = item.role === "user";
+    return (
+      <Animated.View
+        entering={FadeInUp.duration(300)}
+        layout={Layout.springify().damping(20).stiffness(200)}
+        style={[
+          styles.messageContainer,
+          {
+            alignItems: isUser ? "flex-end" : "flex-start",
+            marginHorizontal: Spacing.sm,
+          }
+        ]}
+      >
+        <View
+          style={[
+            styles.messageBubble,
+            isUser
+              ? {
+                  backgroundColor: theme.link,
+                  borderBottomRightRadius: 2,
+                  borderTopRightRadius: 0,
+                }
+              : {
+                  backgroundColor: theme.backgroundSecondary,
+                  borderBottomLeftRadius: 2,
+                  borderTopLeftRadius: 0,
+                  borderWidth: 1,
+                  borderColor: theme.border,
+                },
+          ]}
+        >
+          <ThemedText
+            type="chatMessage"
+            style={[
+              styles.messageText,
+              { color: isUser ? "#FFFFFF" : theme.text },
+            ]}
+          >
+            {item.text}
+          </ThemedText>
+
+          <View style={styles.timestampContainer}>
+            <ThemedText type="chatTimestamp" style={[styles.timestamp, { color: theme.textSecondary }]}>
+              {formatTime(new Date(item.timestamp))}
+            </ThemedText>
+          </View>
+        </View>
+      </Animated.View>
+    );
+  };
+
+  // Render skeleton loader for messages when loading
+  const renderSkeletonMessage = (isUser: boolean) => {
+    return (
+      <View
+        style={[
+          styles.messageContainer,
+          {
+            alignItems: isUser ? "flex-end" : "flex-start",
+            marginHorizontal: Spacing.sm,
+          }
+        ]}
+      >
+        <View
+          style={[
+            styles.messageBubble,
+            isUser
+              ? {
+                  backgroundColor: theme.link,
+                  borderBottomRightRadius: 2,
+                  borderTopRightRadius: 0,
+                }
+              : {
+                  backgroundColor: theme.backgroundSecondary,
+                  borderBottomLeftRadius: 2,
+                  borderTopLeftRadius: 0,
+                  borderWidth: 1,
+                  borderColor: theme.border,
+                },
+          ]}
+        >
+          <Skeleton width="80%" height={16} style={{ marginBottom: Spacing.xs }} />
+          <Skeleton width="60%" height={16} style={{ marginBottom: Spacing.xs }} />
+          <Skeleton width="40%" height={16} />
+        </View>
+      </View>
+    );
+  };
+
+  // Calculate remaining characters
+  const remainingChars = 1000 - input.length;
+
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, Platform.OS === 'web' && { height: '100vh', overflow: 'hidden' }]}>
+      {/* Header */}
       <View
         style={[
           styles.header,
           {
-            paddingTop: insets.top + Spacing.md,
+            paddingTop: (Platform.OS === 'web' ? Spacing.md : insets.top + Spacing.md),
             backgroundColor: theme.backgroundRoot,
+            borderBottomWidth: 1,
+            borderBottomColor: theme.border,
           },
         ]}
       >
-        <Pressable
+        <TouchableScale
           onPress={() => navigation.openDrawer()}
-          style={({ pressed }) => [
-            styles.headerButton,
-            { opacity: pressed ? 0.7 : 1 },
-          ]}
-          testID="button-menu"
+          style={styles.headerButton}
+          scaleTo={0.9}
         >
           <Feather name="menu" size={24} color={theme.text} />
-        </Pressable>
+        </TouchableScale>
 
-        <View style={styles.headerTitleContainer}>
-          <Image
-            source={require("../../assets/images/icon.png")}
-            style={styles.headerIcon}
-            resizeMode="contain"
-          />
-          <ThemedText
-            style={[styles.headerTitle, { fontFamily: "PlayfairDisplay_600SemiBold" }]}
-          >
-            AI Storyteller
-          </ThemedText>
-        </View>
+        <ThemedText
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          style={[styles.headerTitle, { fontFamily: "PlayfairDisplay_600SemiBold", flex: 1, textAlign: "center" }]}
+        >
+          AI Companion
+        </ThemedText>
 
         <View style={styles.headerButton} />
       </View>
 
-      <ScrollView
+      {/* Chat Area */}
+      <KeyboardAwareScrollViewCompat
         ref={scrollViewRef}
-        style={styles.scrollView}
+        style={styles.chatList}
         contentContainerStyle={[
-          styles.scrollContent,
-          { paddingBottom: insets.bottom + Spacing.xl },
+            styles.chatContent,
+            { paddingBottom: Spacing.xl } // Space for footer
         ]}
-        showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        extraHeight={Platform.OS === "android" ? 120 : 80} // Extra height for Android
+        extraScrollHeight={Platform.OS === "android" ? 120 : 80} // Extra scroll height for Android
+      >
+        {isLoading ? (
+          <View style={styles.loadingState}>
+            {renderSkeletonMessage(false)}
+            {renderSkeletonMessage(true)}
+            {renderSkeletonMessage(false)}
+            {renderSkeletonMessage(false)}
+            {renderSkeletonMessage(true)}
+          </View>
+        ) : messages.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Feather name="message-square" size={40} color={theme.textSecondary} style={{ opacity: 0.5, marginBottom: Spacing.md }} />
+            <ThemedText style={{ color: theme.textSecondary, textAlign: "center" }}>Start a conversation with your AI Companion</ThemedText>
+            <ThemedText style={{ color: theme.textSecondary, textAlign: "center", marginTop: Spacing.sm, fontSize: 14 }}>
+              Ask anything, share your thoughts, or just chat!
+            </ThemedText>
+          </View>
+        ) : (
+          messages.map((item, index) => (
+            <View key={item.id} style={{ marginBottom: index === messages.length - 1 ? 0 : Spacing.md }}>
+              {renderMessage({ item })}
+            </View>
+          ))
+        )}
+      </KeyboardAwareScrollViewCompat>
+
+      {/* Input Area */}
+      {Platform.OS === "web" ? (
+        <View
+          style={[
+            styles.inputContainer,
+            {
+              backgroundColor: theme.backgroundDefault,
+              borderTopColor: theme.border,
+              paddingBottom: Spacing.md,
+            },
+          ]}
+        >
+          <View style={styles.inputWrapper}>
+            <TextInput
+            style={[
+                styles.input,
+                {
+                backgroundColor: theme.inputBackground,
+                color: theme.text,
+                borderColor: theme.border,
+                fontFamily: "Inter_400Regular",
+                },
+            ]}
+            placeholder="Type a message..."
+            placeholderTextColor={theme.textSecondary}
+            value={input}
+            onChangeText={setInput}
+            multiline
+            maxLength={1000}
+            />
+
+            {input.length > 0 && (
+              <ThemedText style={[styles.charCount, { color: remainingChars < 100 ? theme.error : theme.textSecondary }]}>
+                {remainingChars}
+              </ThemedText>
+            )}
+          </View>
+
+          <View style={styles.buttonContainer}>
+            {/* Attachment Button */}
+            <TouchableScale
+              style={styles.attachmentButton}
+              scaleTo={0.9}
+              disabled={isSending}
+            >
+              <Feather name="paperclip" size={20} color={theme.textSecondary} />
+            </TouchableScale>
+
+            {/* Send Button */}
+            <TouchableScale
+            onPress={handleSend}
+            disabled={isSending || !input.trim()}
+            style={[
+                styles.sendButton,
+                {
+                backgroundColor: theme.link,
+                opacity: isSending || !input.trim() ? 0.7 : 1,
+                },
+            ]}
+            scaleTo={0.95}
+            >
+            {isSending ? (
+                <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+                <Feather name="send" size={20} color="#FFF" />
+            )}
+            </TouchableScale>
+          </View>
+        </View>
+      ) : (
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "padding"}
+        enabled={Platform.OS !== "web"}
+        style={{ flex: 0 }} // Only affect the keyboard-avoiding area
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         <View
           style={[
-            styles.inputCard,
+            styles.inputContainer,
             {
               backgroundColor: theme.backgroundDefault,
-              borderColor: theme.cardBorder,
+              borderTopColor: theme.border,
+              paddingBottom: insets.bottom + Spacing.sm,
             },
           ]}
         >
-          <TextInput
+          <View style={styles.inputWrapper}>
+            <TextInput
             style={[
-              styles.promptInput,
-              {
-                color: theme.text,
-                fontFamily: "Inter_400Regular",
-              },
-            ]}
-            placeholder="What story shall we tell today?"
-            placeholderTextColor={theme.textSecondary}
-            value={prompt}
-            onChangeText={setPrompt}
-            multiline
-            numberOfLines={4}
-            textAlignVertical="top"
-            editable={!isGenerating}
-            testID="input-prompt"
-          />
-        </View>
-
-        <Pressable
-          onPress={handleGenerate}
-          disabled={isGenerating}
-          style={({ pressed }) => [
-            styles.generateButton,
-            {
-              backgroundColor: theme.link,
-              opacity: pressed ? 0.9 : isGenerating ? 0.7 : 1,
-              transform: [{ scale: pressed ? 0.98 : 1 }],
-            },
-            Shadows.button,
-          ]}
-          testID="button-generate"
-        >
-          {isGenerating ? (
-            <ActivityIndicator color={theme.buttonText} size="small" />
-          ) : (
-            <Feather name="feather" size={20} color={theme.buttonText} />
-          )}
-          <ThemedText
-            style={[
-              styles.generateButtonText,
-              {
-                color: theme.buttonText,
-                fontFamily: "Inter_600SemiBold",
-              },
-            ]}
-          >
-            {isGenerating ? "Crafting your story..." : "Generate Story"}
-          </ThemedText>
-        </Pressable>
-
-        {error ? (
-          <Animated.View
-            entering={FadeIn.duration(300)}
-            style={[styles.errorContainer, { backgroundColor: `${theme.error}15` }]}
-          >
-            <Feather name="alert-circle" size={18} color={theme.error} />
-            <ThemedText style={[styles.errorText, { color: theme.error }]}>
-              {error}
-            </ThemedText>
-          </Animated.View>
-        ) : null}
-
-        {isGenerating && !story ? (
-          <Animated.View style={[styles.loadingContainer, loadingStyle]}>
-            <View
-              style={[
-                styles.loadingCard,
-                { backgroundColor: theme.backgroundSecondary },
-              ]}
-            >
-              <View style={[styles.shimmerLine, { backgroundColor: theme.backgroundTertiary, width: "90%" }]} />
-              <View style={[styles.shimmerLine, { backgroundColor: theme.backgroundTertiary, width: "75%" }]} />
-              <View style={[styles.shimmerLine, { backgroundColor: theme.backgroundTertiary, width: "85%" }]} />
-              <View style={[styles.shimmerLine, { backgroundColor: theme.backgroundTertiary, width: "60%" }]} />
-            </View>
-          </Animated.View>
-        ) : null}
-
-        {story ? (
-          <Animated.View
-            entering={FadeInUp.duration(500).springify()}
-            style={[
-              styles.storyCard,
-              {
-                backgroundColor: theme.backgroundDefault,
-                borderColor: theme.cardBorder,
-              },
-            ]}
-          >
-            <View style={styles.storyHeader}>
-              <ThemedText
-                style={[
-                  styles.storyTitle,
-                  { fontFamily: "PlayfairDisplay_600SemiBold" },
-                ]}
-              >
-                Your Story
-              </ThemedText>
-              <View style={styles.storyActions}>
-                <Pressable
-                  onPress={handleCopy}
-                  style={({ pressed }) => [
-                    styles.actionButton,
-                    { opacity: pressed ? 0.7 : 1 },
-                  ]}
-                  testID="button-copy"
-                >
-                  <Feather name="copy" size={18} color={theme.link} />
-                </Pressable>
-                <Pressable
-                  onPress={handleClear}
-                  style={({ pressed }) => [
-                    styles.actionButton,
-                    { opacity: pressed ? 0.7 : 1 },
-                  ]}
-                  testID="button-clear"
-                >
-                  <Feather name="trash-2" size={18} color={theme.textSecondary} />
-                </Pressable>
-              </View>
-            </View>
-            <ThemedText
-              style={[
-                styles.storyText,
-                { fontFamily: "Inter_400Regular" },
-              ]}
-            >
-              {story}
-            </ThemedText>
-          </Animated.View>
-        ) : null}
-
-        {!story && !isGenerating && !error ? (
-          <Animated.View
-            entering={FadeIn.duration(500)}
-            style={styles.emptyState}
-          >
-            <Image
-              source={require("../../assets/images/empty-state-storybook.png")}
-              style={styles.emptyImage}
-              resizeMode="contain"
-            />
-            <ThemedText
-              style={[
-                styles.emptyTitle,
+                styles.input,
                 {
-                  fontFamily: "PlayfairDisplay_600SemiBold",
-                  color: theme.text,
+                backgroundColor: theme.inputBackground,
+                color: theme.text,
+                borderColor: theme.border,
+                fontFamily: "Inter_400Regular",
                 },
-              ]}
+            ]}
+            placeholder="Type a message..."
+            placeholderTextColor={theme.textSecondary}
+            value={input}
+            onChangeText={setInput}
+            multiline
+            maxLength={1000}
+            />
+
+            {input.length > 0 && (
+              <ThemedText style={[styles.charCount, { color: remainingChars < 100 ? theme.error : theme.textSecondary }]}>
+                {remainingChars}
+              </ThemedText>
+            )}
+          </View>
+
+          <View style={styles.buttonContainer}>
+            {/* Attachment Button */}
+            <TouchableScale
+              style={styles.attachmentButton}
+              scaleTo={0.9}
+              disabled={isSending}
             >
-              Ready to Create Magic
-            </ThemedText>
-            <ThemedText
-              style={[styles.emptySubtitle, { color: theme.textSecondary }]}
+              <Feather name="paperclip" size={20} color={theme.textSecondary} />
+            </TouchableScale>
+
+            {/* Send Button */}
+            <TouchableScale
+            onPress={handleSend}
+            disabled={isSending || !input.trim()}
+            style={[
+                styles.sendButton,
+                {
+                backgroundColor: theme.link,
+                opacity: isSending || !input.trim() ? 0.7 : 1,
+                },
+            ]}
+            scaleTo={0.95}
             >
-              Enter a prompt above and let AI craft your story
-            </ThemedText>
-          </Animated.View>
-        ) : null}
-      </ScrollView>
+            {isSending ? (
+                <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+                <Feather name="send" size={20} color="#FFF" />
+            )}
+            </TouchableScale>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+      )}
     </ThemedView>
   );
 }
 
-const styles = StyleSheet.create({
+// Define styles inside the component to access theme
+const getStyles = (theme: any) => StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -362,122 +484,113 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.md,
+    paddingVertical: Spacing.md,
   },
   headerButton: {
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     alignItems: "center",
     justifyContent: "center",
-  },
-  headerTitleContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  headerIcon: {
-    width: 28,
-    height: 28,
-    marginRight: Spacing.sm,
+    borderRadius: BorderRadius.md,
   },
   headerTitle: {
     fontSize: 20,
+    fontFamily: "PlayfairDisplay_600SemiBold",
   },
-  scrollView: {
+  chatList: {
     flex: 1,
   },
-  scrollContent: {
-    padding: Spacing.lg,
+  chatContainer: {
+    flex: 1,
   },
-  inputCard: {
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    padding: Spacing.lg,
-    marginBottom: Spacing.lg,
+  chatContent: {
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
   },
-  promptInput: {
+  messageContainer: {
+    marginBottom: Spacing.md,
+    maxWidth: "90%",
+  },
+  messageBubble: {
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    maxWidth: "100%",
+    position: "relative",
+  },
+  messageText: {
     fontSize: 16,
     lineHeight: 24,
-    minHeight: 100,
+    marginBottom: Spacing.xs,
   },
-  generateButton: {
+  timestampContainer: {
+    position: "absolute",
+    bottom: Spacing.xs,
+    right: Spacing.md,
+  },
+  timestamp: {
+    fontSize: 11,
+    opacity: 0.7,
+  },
+  inputContainer: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: Spacing.lg,
-    borderRadius: BorderRadius.md,
-    marginBottom: Spacing.lg,
-    gap: Spacing.sm,
-  },
-  generateButtonText: {
-    fontSize: 16,
-  },
-  errorContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: Spacing.md,
-    borderRadius: BorderRadius.xs,
-    marginBottom: Spacing.lg,
-    gap: Spacing.sm,
-  },
-  errorText: {
-    fontSize: 14,
-    flex: 1,
-  },
-  loadingContainer: {
-    marginBottom: Spacing.lg,
-  },
-  loadingCard: {
-    padding: Spacing.xl,
-    borderRadius: BorderRadius.md,
+    padding: Spacing.lg,
+    paddingTop: Spacing.md,
+    borderTopWidth: 1,
+    alignItems: "flex-end",
     gap: Spacing.md,
   },
-  shimmerLine: {
-    height: 16,
-    borderRadius: 4,
+  inputWrapper: {
+    flex: 1,
+    position: "relative",
   },
-  storyCard: {
-    borderRadius: BorderRadius.md,
+  input: {
+    flex: 1,
+    minHeight: 48,
+    maxHeight: 150,
+    borderRadius: 24,
     borderWidth: 1,
-    padding: Spacing.xl,
-    marginBottom: Spacing.lg,
-  },
-  storyHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: Spacing.lg,
-  },
-  storyTitle: {
-    fontSize: 18,
-  },
-  storyActions: {
-    flexDirection: "row",
-    gap: Spacing.sm,
-  },
-  actionButton: {
-    padding: Spacing.sm,
-  },
-  storyText: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: 12,
+    paddingBottom: 12,
     fontSize: 16,
-    lineHeight: 28,
+    lineHeight: 22,
+    paddingRight: 50, // Make space for character count
+  },
+  charCount: {
+    position: "absolute",
+    right: Spacing.lg,
+    bottom: Spacing.md,
+    fontSize: 12,
+    zIndex: 1,
+  },
+  buttonContainer: {
+    flexDirection: "row",
+    gap: Spacing.md,
+  },
+  attachmentButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.backgroundSecondary,
+  },
+  sendButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
   },
   emptyState: {
-    alignItems: "center",
-    paddingVertical: Spacing["4xl"],
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginTop: 120,
+      paddingHorizontal: Spacing.xl,
   },
-  emptyImage: {
-    width: 200,
-    height: 200,
-    marginBottom: Spacing.xl,
-  },
-  emptyTitle: {
-    fontSize: 22,
-    marginBottom: Spacing.sm,
-    textAlign: "center",
-  },
-  emptySubtitle: {
-    fontSize: 15,
-    textAlign: "center",
-    paddingHorizontal: Spacing.xl,
-  },
+  loadingState: {
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
+  }
 });

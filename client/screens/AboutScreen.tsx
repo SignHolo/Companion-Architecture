@@ -49,7 +49,9 @@ export default function AboutScreen({ navigation }: Props) {
         </Pressable>
 
         <ThemedText
-          style={[styles.headerTitle, { fontFamily: "PlayfairDisplay_600SemiBold" }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          style={[styles.headerTitle, { fontFamily: "PlayfairDisplay_600SemiBold", flex: 1, textAlign: "center" }]}
         >
           About
         </ThemedText>
