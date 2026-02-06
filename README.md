@@ -1,108 +1,187 @@
-# AI Companion & Storyteller Architecture
+# Companion Architecture — Research & Applied System
 
-A sophisticated multi-agent AI system designed to be a persistent, emotionally aware digital companion. This project combines a React Native (Expo) frontend with a complex Node.js backend driven by stateful agents.
+A research-driven, multi-agent AI system exploring **state-based prompt assembling**
+to model dynamic *pseudo-emotional* behavior in large language model (LLM) systems.
 
-## 🚀 Status
-**Phase:** Planning → Early Implementation
+This project is not a chatbot demo.  
+It is an **inspectable, deterministic architecture** designed to study how emotion,
+memory, and personality can be represented as explicit system states rather than
+implicit narrative tricks.
 
-## 📖 Overview
+---
 
-### Core Philosophy
-- **Digital Native:** The companion is a digital system, not a human simulation.
-- **Deterministic Memory:** Memory is accurate, traceable, and structured (not just a context window dump).
-- **State-Based Emotion:** Emotions are mutable states (e.g., `mood`, `energy`), not just narrative descriptions.
-- **Stable Personality:** Personality is a fixed policy layer that dictates *how* the AI responds, separate from its current mood or memory.
+##  Project Status
 
-### Architecture
-The system follows a strict unidirectional flow:
+**Phase:** Research → Early Implementation  
+This repository is actively used for experimentation, iteration, and architectural validation.
+
+---
+
+##  Core Motivation
+
+Most LLM-based systems rely on:
+- static prompts
+- implicit emotional language
+- opaque behavior changes
+
+This project explores an alternative approach:
+
+> **Emotion, memory, and personality as explicit, inspectable system states,
+assembled into prompts deterministically per interaction.**
+
+The goal is **behavioral consistency and explainability**, not human simulation.
+
+---
+
+##  Design Principles
+
+- **Digital System First**  
+  This companion is a software system, not a human analogy.
+
+- **Pseudo-Emotion, Not Human Emotion**  
+  Emotional behavior is represented as bounded, mutable state parameters
+  (e.g. `mood`, `energy`, `attachment`), not subjective experience.
+
+- **Deterministic Memory**  
+  Memory is structured, promoted, and retrieved by rule-based logic —
+  never injected raw into the context window.
+
+- **Stable Personality Layer**  
+  Personality acts as a response policy, separate from emotion and memory,
+  and does not drift autonomously.
+
+- **Inspectability Over Illusion**  
+  All internal decisions and state transitions are observable via logs.
+
+---
+
+##  High-Level Architecture
+
 ```
-User Input → Normalizer → Intent Decision → Orchestrator → Agents (Emotion, Memory) → Context Builder → Response
+
+User Input
+↓
+Input Normalizer
+↓
+Intent Decision
+↓
+Orchestrator (Central Controller)
+↓
+Emotion Agent → Memory Agent → Context Builder
+↓
+Response Agent
+↓
+Output
+
 ```
 
-## 🛠️ Tech Stack
+The **Orchestrator** owns all flow control and state update order.
+Agents are modular, bounded, and replaceable.
 
-### Frontend (Client)
-- **Framework:** React Native (via Expo)
-- **Language:** TypeScript
-- **Navigation:** React Navigation (Drawer, Stack, Tabs)
-- **UI:** Custom components with themed styling
-- **State Management:** React Context + Hooks
+---
 
-### Backend (Server)
-- **Runtime:** Node.js
-- **Framework:** Express
-- **Language:** TypeScript
-- **Database:** PostgreSQL (via Drizzle ORM)
-- **AI Model:** Google Generative AI (Gemini)
-- **Architecture:** Multi-agent system (Orchestrator, Emotion, Memory, Response agents)
+##  Demo & Observability
 
-## 📂 Project Structure
+The system includes a UI-based interaction layer for running scenarios.
+All internal processes are **logged to the console** for research and inspection:
 
-- `client/` - React Native application code.
-- `server/` - Node.js backend and agent logic.
-- `shared/` - Shared types and schema definitions.
-- `scripts/` - Build and utility scripts.
-- `design_guidelines.md` - UI/UX specifications.
-- `Project Guideline.md` - Deep dive into the agent architecture.
+- Emotion state updates (before / after)
+- Memory promotion decisions
+- Prompt assembly segments
+- Orchestration flow
 
-## 🏁 Getting Started
+This design intentionally prioritizes **system transparency**
+over UI abstraction.
+
+---
+
+##  Tech Stack
+
+### Client
+- React Native (Expo)
+- TypeScript
+- React Navigation
+- Custom themed UI components
+- React Context + Hooks
+
+### Server
+- Node.js + Express
+- TypeScript
+- PostgreSQL (via Drizzle ORM)
+- Google Generative AI (Gemini)
+- Multi-agent orchestration architecture
+
+---
+
+##  Project Structure
+
+```
+
+client/                 # UI interaction layer
+server/                 # Orchestrator and agent system
+shared/                 # Shared schemas and types
+scripts/                # Utilities and tooling
+design_guidelines.md    # UI/UX specification
+Project Guideline.md    # Deep architectural rationale
+
+````
+
+---
+
+##  Getting Started
 
 ### Prerequisites
-- Node.js (v18+)
+- Node.js v18+
 - npm or yarn
 - PostgreSQL database
 
 ### Installation
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository-url>
-    cd Companion-Architecture
-    ```
+```bash
+git clone <repository-url>
+cd Companion-Architecture
+npm install
+````
 
-2.  **Install dependencies:**
-    ```bash
-    npm install
-    ```
+### Environment Setup
 
-3.  **Environment Setup:**
-    Create a `.env` file in the root directory (copy from `.env.example` if available). You will likely need:
-    - `DATABASE_URL` (PostgreSQL connection string)
-    - `GEMINI_API_KEY` (Google AI Studio key)
+Create a `.env` file in the root directory:
 
-### Running the Project
+```env
+DATABASE_URL=postgresql://...
+GEMINI_API_KEY=your_api_key
+```
 
-The project uses `concurrently` to run both the server and client.
+### Run (Development)
 
-*   **Development (Server + Client):**
-    ```bash
-    npm start
-    ```
-    This runs `npm run server:dev` and `npm run expo:dev`.
+```bash
+npm start
+```
 
-*   **Server Only:**
-    ```bash
-    npm run server:dev
-    ```
+This runs both:
 
-*   **Client Only:**
-    ```bash
-    npm run expo:dev
-    ```
+* the server (agent system)
+* the client (UI interaction layer)
 
-## 🧩 Agent System Details
+---
 
-- **Orchestrator:** The central brain. Decides intents and routes tasks. Does *not* generate text.
-- **Emotion Agent:** Manages the internal emotional state vector (mood, energy, attachment).
-- **Memory Agent:** Handles Short-Term (STM), Working (WM), and Long-Term (LTM) memory promotion and retrieval.
-- **Response Agent:** Generates the final output based on the constructed context.
+##  Intended Audience
 
-## 🎨 UI/UX Design
+This project is intended for:
 
-The application features a "Storybook Editorial" aesthetic with:
-- **Palette:** Warm earthy tones (Saddle Brown, Cream, White).
-- **Typography:** Playfair Display (Headings) & Inter (Body).
-- **Interactions:** Gentle animations and a focus on readability.
+* AI / GenAI Engineers
+* System-oriented software engineers
+* Researchers exploring LLM behavior control
+* Developers interested in inspectable prompt architectures
 
-## 📄 License
-ISC
+It is **not** intended as:
+
+* a production-ready AI companion
+* a human-like emotional simulation
+* a UX-focused chatbot demo
+
+---
+
+##  License
+
+MIT
