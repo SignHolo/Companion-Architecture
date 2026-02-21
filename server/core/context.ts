@@ -1,6 +1,8 @@
 // Context Builder
 import type { EmotionState, SessionMemory } from "./state.js";
-import type { EpisodicMemory, EmotionalTrace, SemanticMemory, IdentityMemory } from "../agents/memory.agent.js";
+import type { EpisodicMemory, EmotionalTrace } from "../agents/memory.agent.js";
+import type { SemanticMemory, IdentityMemory } from "@shared/schema";
+import { cosineSimilarity } from "./ai-provider.js";
 
 interface ContextParams {
   emotionState: EmotionState;
@@ -15,6 +17,8 @@ interface ContextParams {
     hours: number;
     loneliness_label: string;
   };
+  // Optional — if provided, episodic memories are re-ranked by semantic similarity
+  currentInputEmbedding?: number[] | null;
 }
 
 export interface ContextBlock {
@@ -49,8 +53,9 @@ export function buildContext({
   sessionMemory,
   longTermMemory,
   interactionGap,
+  currentInputEmbedding,
 }: ContextParams): ContextBlock {
-  
+
   // Sleep Calculation (UTC+7)
   const dateNow = new Date();
   const currentHour = (dateNow.getUTCHours() + 7) % 24;
@@ -74,21 +79,37 @@ export function buildContext({
     unresolved: sessionMemory.unresolved,
   };
 
-  // 3. Episodic Memory Selection
-  // Max 2, Sort by: 1. recency (newest first), 2. importance
-  // Since our array is chronological, newest is last.
-  const sortedEpisodic = [...longTermMemory.episodic].sort((a, b) => {
-    // Sort by timestamp descending (newest first)
-    const timeA = new Date(a.created_at).getTime();
-    const timeB = new Date(b.created_at).getTime();
-    if (timeA !== timeB) return timeB - timeA;
-    // Then by importance descending
-    return b.importance - a.importance; // importanceVal if text, need parseFloat? Assuming real now.
-  });
+  // 3. Episodic Memory Selection — Significance-Weighted Retrieval
+  // Score = recency bonus + importance + emotional weight bonus
+  // This ensures high-emotion moments surface even when not the most recent
+  const WEIGHT_SCORE = { high: 0.4, medium: 0.2, low: 0.0 };
+  const now = Date.now();
 
-  const selectedEpisodic = sortedEpisodic
-    .slice(0, 2)
-    .map((m) => m.summary);
+  const scoredEpisodic = [...longTermMemory.episodic].map((m) => {
+    const ageHours = (now - new Date(m.created_at).getTime()) / (1000 * 60 * 60);
+    // decay_rate controls the relevance window: slow=30d, normal=7d, fast=2d
+    const decayDays = { slow: 30, normal: 7, fast: 2 }[(m.decay_rate as string) || "normal"] ?? 7;
+    const recencyScore = Math.max(0, 1.0 - (ageHours / (24 * decayDays)));
+    const weightBonus = WEIGHT_SCORE[(m.emotional_weight as keyof typeof WEIGHT_SCORE) || "low"] || 0;
+    const baseScore = recencyScore + m.importance + weightBonus;
+
+    // Semantic similarity re-ranking: blend cosine similarity (60%) with base score (40%)
+    let finalScore = baseScore;
+    if (currentInputEmbedding && m.embedding) {
+      try {
+        const memVec: number[] = JSON.parse(m.embedding);
+        const sim = cosineSimilarity(currentInputEmbedding, memVec); // -1 to 1
+        const normSim = (sim + 1) / 2; // normalize to 0-1
+        finalScore = normSim * 0.6 + baseScore * 0.4;
+      } catch { /* malformed embedding — use base score */ }
+    }
+
+    return { ...m, _score: finalScore };
+  }).sort((a, b) => b._score - a._score);
+
+  const selectedEpisodic = scoredEpisodic
+    .slice(0, 3) // Allow 3 instead of 2 to capture both recent + high-weight memories
+    .map((m) => m.narrative || m.summary); // Prefer first-person narrative
 
   // 4. Emotional Trace Selection
   // Max 2, Sort by: 1. confidence descending

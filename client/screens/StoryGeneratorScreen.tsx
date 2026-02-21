@@ -24,6 +24,7 @@ import Animated, {
 
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
+import { FormattedText } from "@/components/FormattedText";
 import { Skeleton } from "@/components/Skeleton";
 import { TouchableScale } from "@/components/MicroInteractions";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
@@ -85,8 +86,8 @@ export default function ChatScreen({ navigation }: Props) {
 
         // Map role 'assistant'/'model' to 'companion' for UI logic
         const uiMessages = loadedMessages.map((m: any) => ({
-            ...m,
-            role: (m.role === 'user' ? 'user' : 'companion')
+          ...m,
+          role: (m.role === 'user' ? 'user' : 'companion')
         }));
 
         setMessages(uiMessages);
@@ -123,7 +124,7 @@ export default function ChatScreen({ navigation }: Props) {
 
       if (!response.ok) {
         if (response.status === 401) {
-            throw new Error("Please configure API Key in settings.");
+          throw new Error("Please configure API Key in settings.");
         }
         throw new Error("Failed to send message");
       }
@@ -181,28 +182,28 @@ export default function ChatScreen({ navigation }: Props) {
             styles.messageBubble,
             isUser
               ? {
-                  backgroundColor: theme.link,
-                  borderBottomRightRadius: 2,
-                  borderTopRightRadius: 0,
-                }
+                backgroundColor: theme.link,
+                borderBottomRightRadius: 2,
+                borderTopRightRadius: 0,
+              }
               : {
-                  backgroundColor: theme.backgroundSecondary,
-                  borderBottomLeftRadius: 2,
-                  borderTopLeftRadius: 0,
-                  borderWidth: 1,
-                  borderColor: theme.border,
-                },
+                backgroundColor: theme.backgroundSecondary,
+                borderBottomLeftRadius: 2,
+                borderTopLeftRadius: 0,
+                borderWidth: 1,
+                borderColor: theme.border,
+              },
           ]}
         >
-          <ThemedText
-            type="chatMessage"
+          <FormattedText
             style={[
               styles.messageText,
               { color: isUser ? "#FFFFFF" : theme.text },
             ]}
+            baseColor={isUser ? "#FFFFFF" : theme.text}
           >
             {item.text}
-          </ThemedText>
+          </FormattedText>
 
           <View style={styles.timestampContainer}>
             <ThemedText type="chatTimestamp" style={[styles.timestamp, { color: theme.textSecondary }]}>
@@ -231,17 +232,17 @@ export default function ChatScreen({ navigation }: Props) {
             styles.messageBubble,
             isUser
               ? {
-                  backgroundColor: theme.link,
-                  borderBottomRightRadius: 2,
-                  borderTopRightRadius: 0,
-                }
+                backgroundColor: theme.link,
+                borderBottomRightRadius: 2,
+                borderTopRightRadius: 0,
+              }
               : {
-                  backgroundColor: theme.backgroundSecondary,
-                  borderBottomLeftRadius: 2,
-                  borderTopLeftRadius: 0,
-                  borderWidth: 1,
-                  borderColor: theme.border,
-                },
+                backgroundColor: theme.backgroundSecondary,
+                borderBottomLeftRadius: 2,
+                borderTopLeftRadius: 0,
+                borderWidth: 1,
+                borderColor: theme.border,
+              },
           ]}
         >
           <Skeleton width="80%" height={16} style={{ marginBottom: Spacing.xs }} />
@@ -293,8 +294,8 @@ export default function ChatScreen({ navigation }: Props) {
         ref={scrollViewRef}
         style={styles.chatList}
         contentContainerStyle={[
-            styles.chatContent,
-            { paddingBottom: Spacing.xl } // Space for footer
+          styles.chatContent,
+          { paddingBottom: Spacing.xl } // Space for footer
         ]}
         keyboardShouldPersistTaps="handled"
         extraHeight={Platform.OS === "android" ? 120 : 80} // Extra height for Android
@@ -339,21 +340,21 @@ export default function ChatScreen({ navigation }: Props) {
         >
           <View style={styles.inputWrapper}>
             <TextInput
-            style={[
+              style={[
                 styles.input,
                 {
-                backgroundColor: theme.inputBackground,
-                color: theme.text,
-                borderColor: theme.border,
-                fontFamily: "Inter_400Regular",
+                  backgroundColor: theme.inputBackground,
+                  color: theme.text,
+                  borderColor: theme.border,
+                  fontFamily: "Inter_400Regular",
                 },
-            ]}
-            placeholder="Type a message..."
-            placeholderTextColor={theme.textSecondary}
-            value={input}
-            onChangeText={setInput}
-            multiline
-            maxLength={1000}
+              ]}
+              placeholder="Type a message..."
+              placeholderTextColor={theme.textSecondary}
+              value={input}
+              onChangeText={setInput}
+              multiline
+              maxLength={1000}
             />
 
             {input.length > 0 && (
@@ -375,100 +376,100 @@ export default function ChatScreen({ navigation }: Props) {
 
             {/* Send Button */}
             <TouchableScale
-            onPress={handleSend}
-            disabled={isSending || !input.trim()}
-            style={[
+              onPress={handleSend}
+              disabled={isSending || !input.trim()}
+              style={[
                 styles.sendButton,
                 {
-                backgroundColor: theme.link,
-                opacity: isSending || !input.trim() ? 0.7 : 1,
+                  backgroundColor: theme.link,
+                  opacity: isSending || !input.trim() ? 0.7 : 1,
                 },
-            ]}
-            scaleTo={0.95}
+              ]}
+              scaleTo={0.95}
             >
-            {isSending ? (
+              {isSending ? (
                 <ActivityIndicator size="small" color="#FFF" />
-            ) : (
+              ) : (
                 <Feather name="send" size={20} color="#FFF" />
-            )}
+              )}
             </TouchableScale>
           </View>
         </View>
       ) : (
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "padding"}
-        enabled={Platform.OS !== "web"}
-        style={{ flex: 0 }} // Only affect the keyboard-avoiding area
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
-      >
-        <View
-          style={[
-            styles.inputContainer,
-            {
-              backgroundColor: theme.backgroundDefault,
-              borderTopColor: theme.border,
-              paddingBottom: insets.bottom + Spacing.sm,
-            },
-          ]}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "padding"}
+          enabled={Platform.OS !== "web"}
+          style={{ flex: 0 }} // Only affect the keyboard-avoiding area
+          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
         >
-          <View style={styles.inputWrapper}>
-            <TextInput
+          <View
             style={[
-                styles.input,
-                {
-                backgroundColor: theme.inputBackground,
-                color: theme.text,
-                borderColor: theme.border,
-                fontFamily: "Inter_400Regular",
-                },
+              styles.inputContainer,
+              {
+                backgroundColor: theme.backgroundDefault,
+                borderTopColor: theme.border,
+                paddingBottom: insets.bottom + Spacing.sm,
+              },
             ]}
-            placeholder="Type a message..."
-            placeholderTextColor={theme.textSecondary}
-            value={input}
-            onChangeText={setInput}
-            multiline
-            maxLength={1000}
-            />
+          >
+            <View style={styles.inputWrapper}>
+              <TextInput
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: theme.inputBackground,
+                    color: theme.text,
+                    borderColor: theme.border,
+                    fontFamily: "Inter_400Regular",
+                  },
+                ]}
+                placeholder="Type a message..."
+                placeholderTextColor={theme.textSecondary}
+                value={input}
+                onChangeText={setInput}
+                multiline
+                maxLength={1000}
+              />
 
-            {input.length > 0 && (
-              <ThemedText style={[styles.charCount, { color: remainingChars < 100 ? theme.error : theme.textSecondary }]}>
-                {remainingChars}
-              </ThemedText>
-            )}
+              {input.length > 0 && (
+                <ThemedText style={[styles.charCount, { color: remainingChars < 100 ? theme.error : theme.textSecondary }]}>
+                  {remainingChars}
+                </ThemedText>
+              )}
+            </View>
+
+            <View style={styles.buttonContainer}>
+              {/* Attachment Button */}
+              <TouchableScale
+                style={styles.attachmentButton}
+                scaleTo={0.9}
+                disabled={isSending}
+              >
+                <Feather name="paperclip" size={20} color={theme.textSecondary} />
+              </TouchableScale>
+
+              {/* Send Button */}
+              <TouchableScale
+                onPress={handleSend}
+                disabled={isSending || !input.trim()}
+                style={[
+                  styles.sendButton,
+                  {
+                    backgroundColor: theme.link,
+                    opacity: isSending || !input.trim() ? 0.7 : 1,
+                  },
+                ]}
+                scaleTo={0.95}
+              >
+                {isSending ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Feather name="send" size={20} color="#FFF" />
+                )}
+              </TouchableScale>
+            </View>
           </View>
-
-          <View style={styles.buttonContainer}>
-            {/* Attachment Button */}
-            <TouchableScale
-              style={styles.attachmentButton}
-              scaleTo={0.9}
-              disabled={isSending}
-            >
-              <Feather name="paperclip" size={20} color={theme.textSecondary} />
-            </TouchableScale>
-
-            {/* Send Button */}
-            <TouchableScale
-            onPress={handleSend}
-            disabled={isSending || !input.trim()}
-            style={[
-                styles.sendButton,
-                {
-                backgroundColor: theme.link,
-                opacity: isSending || !input.trim() ? 0.7 : 1,
-                },
-            ]}
-            scaleTo={0.95}
-            >
-            {isSending ? (
-                <ActivityIndicator size="small" color="#FFF" />
-            ) : (
-                <Feather name="send" size={20} color="#FFF" />
-            )}
-            </TouchableScale>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
       )}
     </ThemedView>
   );
@@ -583,11 +584,11 @@ const getStyles = (theme: any) => StyleSheet.create({
     justifyContent: "center",
   },
   emptyState: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginTop: 120,
-      paddingHorizontal: Spacing.xl,
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 120,
+    paddingHorizontal: Spacing.xl,
   },
   loadingState: {
     paddingVertical: Spacing.md,

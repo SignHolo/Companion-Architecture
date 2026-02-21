@@ -252,6 +252,37 @@ function setupErrorHandler(app: express.Application) {
     },
     () => {
       log(`express server serving on port ${port}`);
+
+      // --- Auto Heartbeat: self-scheduling loop ---
+      startHeartbeatLoop();
     },
   );
 })();
+
+// --- Heartbeat Auto-Scheduler ---
+const HEARTBEAT_MIN_MS = 30 * 60 * 1000;  // 30 minutes
+const HEARTBEAT_MAX_MS = 120 * 60 * 1000; // 120 minutes
+
+function getRandomDelay(): number {
+  return Math.floor(Math.random() * (HEARTBEAT_MAX_MS - HEARTBEAT_MIN_MS + 1)) + HEARTBEAT_MIN_MS;
+}
+
+function startHeartbeatLoop() {
+  const delay = getRandomDelay();
+  const nextAt = new Date(Date.now() + delay);
+  const delayMinutes = (delay / 60000).toFixed(1);
+
+  log(`[Heartbeat] Next auto-heartbeat in ${delayMinutes} min (at ${nextAt.toLocaleTimeString()})`);
+
+  setTimeout(async () => {
+    try {
+      const { runHeartbeat } = await import("./agents/monologue.agent.js");
+      await runHeartbeat();
+    } catch (e) {
+      console.error("[Heartbeat] Auto-heartbeat failed:", e);
+    }
+
+    // Schedule the next one
+    startHeartbeatLoop();
+  }, delay);
+}

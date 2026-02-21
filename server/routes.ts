@@ -14,11 +14,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Message is required" });
       }
 
-      // Check if API key exists
+      // Check if active provider has a key configured
       const settings = await storage.getSettings();
-      if (!settings.gemini_api_key) {
-        return res.status(401).json({ 
-          error: "Gemini API Key not configured. Please set it in settings." 
+      const provider = settings.active_provider || "gemini";
+      const hasKey =
+        (provider === "gemini" && !!settings.gemini_api_key) ||
+        (provider === "mistral" && !!settings.mistral_api_key);
+
+      if (!hasKey) {
+        return res.status(401).json({
+          error: `${provider === "mistral" ? "Mistral" : "Gemini"} API Key not configured. Please set it in settings.`
         });
       }
 
@@ -40,14 +45,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const settings = await storage.getSettings();
 
       // Return masked keys
-      const maskedGemini = settings.gemini_api_key 
-        ? `${settings.gemini_api_key.substring(0, 4)}...${settings.gemini_api_key.substring(settings.gemini_api_key.length - 4)}` 
+      const maskedGemini = settings.gemini_api_key
+        ? `${settings.gemini_api_key.substring(0, 4)}...${settings.gemini_api_key.substring(settings.gemini_api_key.length - 4)}`
         : "";
 
-      return res.json({ 
+      const maskedMistral = settings.mistral_api_key
+        ? `${settings.mistral_api_key.substring(0, 4)}...${settings.mistral_api_key.substring(settings.mistral_api_key.length - 4)}`
+        : "";
+
+      return res.json({
         ...settings,
         gemini_api_key: maskedGemini,
-        openai_api_key: settings.openai_api_key ? "configured" : "" 
+        mistral_api_key: maskedMistral,
+        openai_api_key: settings.openai_api_key ? "configured" : ""
       });
     } catch (error) {
       console.error("Settings get error:", error);
@@ -59,7 +69,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/settings", async (req: Request, res: Response) => {
     try {
       const updateData = { ...req.body };
-      
+
       const updated = await storage.updateSettings(updateData);
       return res.json({ success: true });
     } catch (error) {
@@ -78,6 +88,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Chat history error:", error);
       return res.status(500).json({ error: "Failed to fetch chat history" });
+    }
+  });
+
+  // Heartbeat Endpoint — triggers internal monologue generation
+  app.post("/api/heartbeat", async (req: Request, res: Response) => {
+    try {
+      const { runHeartbeat } = await import("./agents/monologue.agent.js");
+      await runHeartbeat();
+      return res.json({ success: true, message: "Heartbeat cycle complete" });
+    } catch (error) {
+      console.error("Heartbeat error:", error);
+      return res.status(500).json({ error: "Heartbeat failed" });
+    }
+  });
+
+  // Monologue Retrieval — get unsurfaced thoughts (for presence triggers)
+  app.get("/api/monologue", async (req: Request, res: Response) => {
+    try {
+      const entries = await storage.getUnsurfacedMonologues(3);
+      return res.json({ entries });
+    } catch (error) {
+      console.error("Monologue fetch error:", error);
+      return res.status(500).json({ error: "Failed to fetch monologues" });
     }
   });
 

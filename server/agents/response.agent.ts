@@ -1,14 +1,9 @@
-// Response Agent — Gemini SAFE FIXED VERSION
+// Response Agent — Provider-agnostic version
 
 import { storage } from "../storage.js";
 import type { ContextBlock } from "../core/context.js";
 import { getSTM, getIsFirstTurn, setIsFirstTurn } from "../core/state.js";
-import {
-  GoogleGenerativeAI,
-  HarmCategory,
-  HarmBlockThreshold,
-  type Content,
-} from "@google/generative-ai";
+import { generateText } from "../core/ai-provider.js";
 import type { IntentResult } from "../core/intent.js";
 
 interface ResponseParams {
@@ -16,6 +11,13 @@ interface ResponseParams {
   intent: IntentResult;
   emotionState: any;
   context: ContextBlock;
+  previousSelfState?: {
+    current_state: string;
+    intensity: string;
+    shift_from_last: string | null;
+    notable: string | null;
+  } | null;
+  recentMonologues?: string[]; // Unsurfaced private thoughts from between conversations
 }
 
 /* =========================
@@ -40,26 +42,6 @@ const GUIDELINES = `
 `.trim();
 
 /* =========================
-   GEMINI RESPONSE PARSER
-========================= */
-
-function extractGeminiText(response: any): string | null {
-  if (!response?.candidates?.length) return null;
-
-  for (const candidate of response.candidates) {
-    const parts = candidate?.content?.parts;
-    if (!parts) continue;
-
-    for (const part of parts) {
-      if (typeof part?.text === "string" && part.text.trim() !== "") {
-        return part.text;
-      }
-    }
-  }
-  return null;
-}
-
-/* =========================
    MAIN RESPONSE FUNCTION
 ========================= */
 
@@ -68,15 +50,13 @@ export async function generateResponse({
   intent,
   emotionState,
   context,
+  previousSelfState,
+  recentMonologues,
 }: ResponseParams): Promise<string> {
 
   /* ---------- LOAD SETTINGS ---------- */
 
   const settings = await storage.getSettings();
-
-  if (!settings.gemini_api_key) {
-    return "…sorry, i can’t think clearly right now.";
-  }
 
   /* ---------- PARSE PERSONALITY ---------- */
 
@@ -85,29 +65,36 @@ export async function generateResponse({
 
   try {
     personality = JSON.parse(settings.companion_personality || "{}");
-  } catch {}
+  } catch { }
 
   try {
     userPersona = JSON.parse(settings.user_persona || "{}");
-  } catch {}
+  } catch { }
 
   /* ---------- PROMPT BLOCKS ---------- */
 
-  const personalityBlock = `
-COMPANION PERSONALITY:
-- Name: ${personality.name || "Aura"}
-- Tone: ${personality.tone || "warm, empathetic"}
-${Array.isArray(personality.traits)
-  ? personality.traits.map((t: string) => `- ${t}`).join("\n")
-  : ""}
-`.trim();
+  const personalityBlock = [
+    "COMPANION PERSONALITY:",
+    `- Name: ${personality.name || "Aura"}`,
+    personality.tone ? `- Tone: ${personality.tone}` : null,
+    ...(Array.isArray(personality.traits)
+      ? personality.traits.map((t: string) => `- ${t}`)
+      : []),
+  ].filter(Boolean).join("\n");
+
+  const appearanceBlock = settings.companion_appearance
+    ? `
+MY APPEARANCE:
+${settings.companion_appearance}
+`.trim()
+    : "";
 
   const personaBlock = `
 USER PERSONA:
 - Name: ${userPersona.name || "User"}
 ${Array.isArray(userPersona.preferences)
-  ? userPersona.preferences.map((p: string) => `- ${p}`).join("\n")
-  : ""}
+      ? userPersona.preferences.map((p: string) => `- ${p}`).join("\n")
+      : ""}
 `.trim();
 
   const contextBlock = `
@@ -121,9 +108,34 @@ CURRENT CONTEXT:
 - Internal stats: Battery=${context.emotion.social_battery.toFixed(2)}, Sleepiness=${context.emotion.sleepiness.toFixed(2)}, Irritation=${context.emotion.irritation.toFixed(2)}, Curiosity=${context.emotion.curiosity.toFixed(2)}
 - Status: ${context.emotion.is_sleep_time ? "SLEEP MODE (Active)" : "Awake"}
 - Interaction Gap: ${context.interaction_gap.hours.toFixed(1)}h (Loneliness: ${context.interaction_gap.loneliness_label})
+- What I know about you: ${context.memories.identity.join("; ") || "still learning"}
 - Episodic memories: ${context.memories.episodic.join("; ") || "none"}
 - Emotional patterns: ${context.memories.emotional_traces.join("; ") || "none"}
 `.trim();
+
+  /* ---------- SELF-STATE (from last turn) ---------- */
+
+  let selfStateBlock = "";
+  if (previousSelfState) {
+    selfStateBlock = `
+MY LAST INNER STATE (this is how I felt after our last exchange):
+- State: ${previousSelfState.current_state}
+- Intensity: ${previousSelfState.intensity}
+${previousSelfState.shift_from_last ? `- Shift: ${previousSelfState.shift_from_last}` : ""}
+${previousSelfState.notable ? `- Notable: ${previousSelfState.notable}` : ""}
+`.trim();
+  }
+
+  /* ---------- PRIVATE THOUGHTS (from monologue system) ---------- */
+
+  let monologueBlock = "";
+  if (recentMonologues && recentMonologues.length > 0) {
+    monologueBlock = `
+RECENT PRIVATE THOUGHTS (things I was thinking about between our conversations):
+${recentMonologues.map((t) => `- ${t}`).join("\n")}
+You may weave these into the conversation naturally if relevant, but don't force them.
+`.trim();
+  }
 
   /* ---------- STM ---------- */
 
@@ -137,7 +149,7 @@ ${stm.map(t => `${t.role === "user" ? "User" : "Assistant"}: ${t.content}`).join
       : "";
 
   /* ---------- CONTEXT RESTORE (ON RESTART) ---------- */
-  
+
   let restoredContextBlock = "";
   if (getIsFirstTurn()) {
     try {
@@ -145,7 +157,7 @@ ${stm.map(t => `${t.role === "user" ? "User" : "Assistant"}: ${t.content}`).join
       const recentHistory = await storage.getRecentChatMessages(10);
       // Reverse to chronological order (Oldest -> Newest)
       const chronologicalHistory = recentHistory.reverse();
-      
+
       if (chronologicalHistory.length > 0) {
         restoredContextBlock = `
 OUR LAST INTERACTION (CONTEXT RESTORE):
@@ -168,9 +180,12 @@ ${input}
 
   const userPrompt = [
     personalityBlock,
+    appearanceBlock,   // <--- What I look like
     personaBlock,
     contextBlock,
-    restoredContextBlock, // <--- Added here
+    selfStateBlock,    // <--- Companion's own previous emotional state
+    monologueBlock,    // <--- Private thoughts from between conversations
+    restoredContextBlock,
     stmBlock,
     userInputBlock,
   ].filter(Boolean).join("\n\n");
@@ -179,63 +194,48 @@ ${input}
   console.log("\n[Prompt][User Side]\n---\n" + userPrompt + "\n---\n");
 
   /* =========================
-     GEMINI CALL (SAFE MODE)
+     LLM CALL (PROVIDER-AGNOSTIC)
   ========================= */
 
+  const coreInstructions = settings.system_core || SYSTEM_GUARD;
+
+  // [SENSE OF SELF] — compiled from all self-beliefs the user has spoken to the companion.
+  // Lives above everything else in the system prompt so it shapes every response at the foundational level.
+  const senseOfSelf = settings.companion_identity_block
+    ? settings.companion_identity_block + "\n\n"
+    : "";
+
+  const systemPrompt = senseOfSelf + coreInstructions + "\n\n" + GUIDELINES + `
+
+IMPORTANT — SELF-STATE REFLECTION:
+After writing your response, append a self-reflection block on a new line.
+This block MUST start with [SELF_STATE] and end with [/SELF_STATE].
+Inside, write a JSON object reflecting your current inner state.
+Format:
+[SELF_STATE]
+{"current_state": "your emotional state in a few words", "intensity": "low/moderate/high", "shift_from_last": "how you shifted since last exchange or null", "notable": "anything that stood out to you about this exchange or null"}
+[/SELF_STATE]
+
+Write this honestly — it's private, the user won't see it. It will be stored and given back to you next turn as your emotional continuity.
+Do NOT reference this block in your visible response.
+`;
+
   try {
-    const genAI = new GoogleGenerativeAI(settings.gemini_api_key);
-    
-    // Check if using Gemma (which doesn't support systemInstruction API field)
-    const isGemma = settings.gemini_model?.toLowerCase().includes("gemma");
-    
-    // Use the custom system_core from settings, or fallback to the default guard
-    const coreInstructions = settings.system_core || SYSTEM_GUARD;
-    
-    let finalUserPrompt = userPrompt;
-    let systemInstructionConfig = coreInstructions + "\n\n" + GUIDELINES;
-
-    if (isGemma) {
-      // For Gemma, prepend system instruction to user prompt manually
-      finalUserPrompt = systemInstructionConfig + "\n\n" + userPrompt;
-      systemInstructionConfig = undefined as any; // Clear it for the config
-    }
-
-    const model = genAI.getGenerativeModel({
-      model: settings.gemini_model || "gemma-3-27b-it", // ⚠️ STABLE MODEL
-      systemInstruction: systemInstructionConfig,
-      safetySettings: [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-      ],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 10000,
-      },
+    const text = await generateText(userPrompt, {
+      systemPrompt,
+      temperature: 0.7,
+      maxOutputTokens: 10000,
+      disableSafety: true,
     });
 
-    const contents: Content[] = [
-      {
-        role: "user",
-        parts: [{ text: finalUserPrompt }],
-      },
-    ];
-
-    const result = await model.generateContent({ contents });
-
-    const response = result.response;
-    const text = extractGeminiText(response);
-
-    if (!text) {
-      console.error("[Gemini][Empty]", JSON.stringify(response, null, 2));
-      return "…i’m here. even if words feel hard right now.";
+    if (!text?.trim()) {
+      return "…i'm here. even if words feel hard right now.";
     }
 
     return text;
 
   } catch (err: any) {
-    console.error("[ResponseAgent][Gemini Error]", err);
-    return "…something feels off in my head right now, but i’m still here with you.";
+    console.error("[ResponseAgent] Error:", err);
+    return "…something feels off in my head right now, but i'm still here with you.";
   }
 }

@@ -1,5 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { storage } from "../storage.js";
+import { generateText } from "./ai-provider.js";
 import { INTENTS, EMOTIONS, SOCIAL_DYNAMICS } from "./intent.registry.js";
 
 // Types for the 3-Axis Result
@@ -68,15 +67,15 @@ function fallbackKeywordCheck(input: string): IntentResult {
       source: "keyword",
     };
   }
-  
+
   if (lowerInput.includes("ingat") || lowerInput.includes("kapan") || lowerInput.includes("remember")) {
-      return {
-          primary: INTENTS.MEMORY_INQUIRY,
-          emotion: EMOTIONS.NEUTRAL,
-          dynamic: SOCIAL_DYNAMICS.COLLABORATIVE,
-          confidence: 0.7,
-          source: "keyword"
-      }
+    return {
+      primary: INTENTS.MEMORY_INQUIRY,
+      emotion: EMOTIONS.NEUTRAL,
+      dynamic: SOCIAL_DYNAMICS.COLLABORATIVE,
+      confidence: 0.7,
+      source: "keyword"
+    }
   }
 
   return {
@@ -90,18 +89,6 @@ function fallbackKeywordCheck(input: string): IntentResult {
 
 // 2. LLM Classification Logic
 async function classifyWithLLM(input: string): Promise<IntentResult> {
-  const settings = await storage.getSettings();
-  const apiKey = settings.gemini_api_key;
-
-  if (!apiKey) throw new Error("No API Key");
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  // Using Gemini 2.5 Flash as requested for balance of smarts & speed
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash", 
-    generationConfig: { responseMimeType: "application/json" },
-  });
-
   const prompt = `
     You are the Empathy Engine for an AI Companion. 
     Classify the User Input into a 3-Axis Interaction Model.
@@ -141,9 +128,15 @@ async function classifyWithLLM(input: string): Promise<IntentResult> {
     User Input: "${input}"
   `;
 
-  const result = await model.generateContent(prompt);
-  const response = result.response;
-  const data = JSON.parse(response.text());
+  let text = await generateText(prompt, { jsonMode: true });
+
+  // Strip markdown code fences if present
+  text = text.trim();
+  if (text.startsWith("```")) {
+    text = text.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+  }
+
+  const data = JSON.parse(text);
 
   return {
     primary: data.primary_intent,

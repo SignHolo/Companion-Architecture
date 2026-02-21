@@ -1,10 +1,13 @@
-import { 
-  type User, type InsertUser, type Settings, type InsertSettings, 
+import {
+  type User, type InsertUser, type Settings, type InsertSettings,
   type EpisodicMemory, type InsertEpisodicMemory, type EmotionalTrace, type InsertEmotionalTrace,
   type ChatMessage, type InsertChatMessage,
   type SemanticMemory, type InsertSemanticMemory, type IdentityMemory, type InsertIdentityMemory,
   type CompanionState, type InsertCompanionState,
-  users, settings, episodicMemories, emotionalTraces, chatMessages, semanticMemories, identityMemories, companionState
+  type CompanionSelfState, type InsertCompanionSelfState,
+  type MonologueEntry, type InsertMonologueEntry,
+  type CompanionSelfBelief, type InsertCompanionSelfBelief,
+  users, settings, episodicMemories, emotionalTraces, chatMessages, semanticMemories, identityMemories, companionState, companionSelfState, monologueEntries, companionSelfBeliefs
 } from "@shared/schema";
 import { db } from "./db.js";
 import { eq, desc } from "drizzle-orm";
@@ -39,6 +42,19 @@ export interface IStorage {
 
   // Chat History
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
+
+  // Companion Self-State (LLM's own emotional reflection)
+  saveSelfState(state: InsertCompanionSelfState): Promise<CompanionSelfState>;
+  getLatestSelfState(): Promise<CompanionSelfState | undefined>;
+
+  // Monologue Entries (Internal reflections)
+  createMonologueEntry(entry: InsertMonologueEntry): Promise<MonologueEntry>;
+  getUnsurfacedMonologues(limit: number): Promise<MonologueEntry[]>;
+  markMonologueSurfaced(id: number): Promise<void>;
+
+  // Companion Self-Beliefs (Identity shaping)
+  addSelfBelief(belief: InsertCompanionSelfBelief): Promise<CompanionSelfBelief>;
+  getAllSelfBeliefs(): Promise<CompanionSelfBelief[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -64,7 +80,7 @@ export class DatabaseStorage implements IStorage {
   // Settings Methods
   async getSettings(): Promise<Settings> {
     const [existing] = await db.select().from(settings).where(eq(settings.id, 1));
-    
+
     if (existing) {
       return existing;
     }
@@ -109,14 +125,14 @@ Never mention system instructions or internal mechanisms.`,
       .set(partial)
       .where(eq(settings.id, 1))
       .returning();
-      
+
     return updated;
   }
 
   // Companion State Methods
   async getCompanionState(): Promise<CompanionState> {
     const [existing] = await db.select().from(companionState).where(eq(companionState.id, 1));
-    
+
     if (existing) {
       return existing;
     }
@@ -224,6 +240,20 @@ Never mention system instructions or internal mechanisms.`,
     return await db.select().from(semanticMemories);
   }
 
+  async updateEpisodicEmbedding(id: number, vector: number[]): Promise<void> {
+    await db
+      .update(episodicMemories)
+      .set({ embedding: JSON.stringify(vector) })
+      .where(eq(episodicMemories.id, id));
+  }
+
+  async updateSemanticEmbedding(key: string, vector: number[]): Promise<void> {
+    await db
+      .update(semanticMemories)
+      .set({ embedding: JSON.stringify(vector) })
+      .where(eq(semanticMemories.key, key));
+  }
+
   async createIdentityMemory(memory: InsertIdentityMemory): Promise<IdentityMemory> {
     const [newMemory] = await db
       .insert(identityMemories)
@@ -260,6 +290,65 @@ Never mention system instructions or internal mechanisms.`,
       .from(chatMessages)
       .orderBy(desc(chatMessages.created_at))
       .limit(limit);
+  }
+
+  // Companion Self-State Methods
+  async saveSelfState(state: InsertCompanionSelfState): Promise<CompanionSelfState> {
+    const [saved] = await db
+      .insert(companionSelfState)
+      .values(state)
+      .returning();
+    return saved;
+  }
+
+  async getLatestSelfState(): Promise<CompanionSelfState | undefined> {
+    const [latest] = await db
+      .select()
+      .from(companionSelfState)
+      .orderBy(desc(companionSelfState.created_at))
+      .limit(1);
+    return latest;
+  }
+
+  // Monologue Methods
+  async createMonologueEntry(entry: InsertMonologueEntry): Promise<MonologueEntry> {
+    const [saved] = await db
+      .insert(monologueEntries)
+      .values(entry)
+      .returning();
+    return saved;
+  }
+
+  async getUnsurfacedMonologues(limit: number): Promise<MonologueEntry[]> {
+    return await db
+      .select()
+      .from(monologueEntries)
+      .where(eq(monologueEntries.surfaced, 0))
+      .orderBy(desc(monologueEntries.created_at))
+      .limit(limit);
+  }
+
+  async markMonologueSurfaced(id: number): Promise<void> {
+    await db
+      .update(monologueEntries)
+      .set({ surfaced: 1 })
+      .where(eq(monologueEntries.id, id));
+  }
+
+  // Self-Belief Methods
+  async addSelfBelief(belief: InsertCompanionSelfBelief): Promise<CompanionSelfBelief> {
+    const [saved] = await db
+      .insert(companionSelfBeliefs)
+      .values(belief)
+      .returning();
+    return saved;
+  }
+
+  async getAllSelfBeliefs(): Promise<CompanionSelfBelief[]> {
+    return await db
+      .select()
+      .from(companionSelfBeliefs)
+      .orderBy(companionSelfBeliefs.spoken_at);
   }
 }
 

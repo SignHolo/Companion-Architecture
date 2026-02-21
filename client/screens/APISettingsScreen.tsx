@@ -27,107 +27,84 @@ type Props = {
   navigation: DrawerNavigationProp<DrawerParamList, "APISettings">;
 };
 
+type Provider = "gemini" | "mistral";
+
 export default function APISettingsScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
   const { apiKey, setApiKey, isLoading } = useSettings();
-  const [inputValue, setInputValue] = useState("");
-  const [showKey, setShowKey] = useState(false);
+
+  const [activeProvider, setActiveProvider] = useState<Provider>("gemini");
+
+  // Gemini fields
+  const [geminiKey, setGeminiKey] = useState("");
+  const [geminiModel, setGeminiModel] = useState("");
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+
+  // Mistral fields
+  const [mistralKey, setMistralKey] = useState("");
+  const [mistralModel, setMistralModel] = useState("");
+  const [showMistralKey, setShowMistralKey] = useState(false);
+
   const [isSaving, setIsSaving] = useState(false);
-  const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
-    setInputValue(apiKey);
+    // Seed Gemini key from context
+    setGeminiKey(apiKey || "");
   }, [apiKey]);
 
-  // Validate API key format
-  const validateApiKey = (key: string): boolean => {
-    if (!key.trim()) {
-      setValidationError("API key is required");
-      return false;
-    }
-
-    setValidationError(null);
-    return true;
-  };
+  useEffect(() => {
+    // Load full settings from API to prefill all fields
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/settings");
+        const data = await res.json();
+        if (data.active_provider) setActiveProvider(data.active_provider as Provider);
+        if (data.gemini_model) setGeminiModel(data.gemini_model);
+        // Don't prefill masked keys — just show placeholder
+      } catch { }
+    })();
+  }, []);
 
   const handleSave = async () => {
-    if (!validateApiKey(inputValue)) return;
-
     setIsSaving(true);
+    setTestResult(null);
     try {
-      // 1. Save to Backend using apiRequest helper (handles Base URL)
-      await apiRequest("POST", "/api/settings", {
-        gemini_api_key: inputValue.trim(),
-        gemini_model: "gemini-3-pro-preview",
-      });
-      // 2. Update Local Context (Legacy/UI sync)
-      await setApiKey(inputValue.trim());
+      const payload: Record<string, string> = {
+        active_provider: activeProvider,
+      };
 
-      setTestResult({ success: true, message: "API key saved successfully" });
-      setValidationError(null);
+      if (geminiKey.trim() && !geminiKey.includes("...")) {
+        payload.gemini_api_key = geminiKey.trim();
+      }
+      if (geminiModel.trim()) {
+        payload.gemini_model = geminiModel.trim();
+      }
+      if (mistralKey.trim() && !mistralKey.includes("...")) {
+        payload.mistral_api_key = mistralKey.trim();
+      }
+      if (mistralModel.trim()) {
+        payload.mistral_model = mistralModel.trim();
+      }
+
+      await apiRequest("POST", "/api/settings", payload);
+
+      if (activeProvider === "gemini" && geminiKey.trim() && !geminiKey.includes("...")) {
+        await setApiKey(geminiKey.trim());
+      }
+
+      setTestResult({ success: true, message: "Settings saved successfully" });
       if (Platform.OS !== "web") {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } catch (error) {
-      console.error(error);
-      setTestResult({ success: false, message: "Failed to save API key" });
+      setTestResult({ success: false, message: "Failed to save settings" });
       if (Platform.OS !== "web") {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const handleTest = async () => {
-    if (!validateApiKey(inputValue)) return;
-
-    setIsTesting(true);
-    setTestResult(null);
-
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models?key=${inputValue.trim()}`
-      );
-
-      if (response.ok) {
-        setTestResult({ success: true, message: "Connection successful! API key is valid." });
-        if (Platform.OS !== "web") {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-      } else {
-        const data = await response.json();
-        setTestResult({
-          success: false,
-          message: data.error?.message || "Invalid API key",
-        });
-        if (Platform.OS !== "web") {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        }
-      }
-    } catch (error) {
-      setTestResult({ success: false, message: "Failed to test connection" });
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      }
-    } finally {
-      setIsTesting(false);
-    }
-  };
-
-  // Handle input changes with real-time validation
-  const handleInputChange = (text: string) => {
-    setInputValue(text);
-    setTestResult(null);
-
-    // Clear validation error if user is typing
-    if (text.length > 0) {
-      validateApiKey(text);
-    } else {
-      setValidationError(null);
     }
   };
 
@@ -138,6 +115,8 @@ export default function APISettingsScreen({ navigation }: Props) {
       </ThemedView>
     );
   }
+
+  const providerColor = activeProvider === "mistral" ? "#FF7000" : theme.link;
 
   return (
     <ThemedView style={styles.container}>
@@ -176,205 +155,199 @@ export default function APISettingsScreen({ navigation }: Props) {
           { paddingBottom: insets.bottom + Spacing.xl },
         ]}
       >
+        {/* --- Provider Selector --- */}
         <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: theme.backgroundDefault,
-              borderColor: theme.cardBorder,
-            },
-          ]}
+          style={[styles.card, { backgroundColor: theme.backgroundDefault, borderColor: theme.cardBorder }]}
         >
           <View style={styles.cardHeader}>
-            <Feather name="key" size={24} color={theme.link} />
-            <ThemedText
-              style={[styles.cardTitle, { fontFamily: "Inter_600SemiBold" }]}
-            >
-              Gemini API Key
+            <Feather name="cpu" size={24} color={providerColor} />
+            <ThemedText style={[styles.cardTitle, { fontFamily: "Inter_600SemiBold" }]}>
+              Active Provider
             </ThemedText>
           </View>
-
           <ThemedText style={[styles.description, { color: theme.textSecondary }]}>
-            Enter your Google Gemini API key to enable story generation. You can get
-            one from Google AI Studio.
+            Select which AI backend powers your companion.
           </ThemedText>
 
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={[
-                styles.input,
-                validationError && { borderColor: theme.error },
-                {
-                  backgroundColor: theme.inputBackground,
-                  color: theme.text,
-                  fontFamily: "Inter_400Regular",
-                },
-              ]}
-              placeholder="Enter your API key"
-              placeholderTextColor={theme.textSecondary}
-              value={inputValue}
-              onChangeText={handleInputChange}
-              secureTextEntry={!showKey}
-              autoCapitalize="none"
-              autoCorrect={false}
-              testID="input-api-key"
+          <View style={styles.providerToggleRow}>
+            {(["gemini", "mistral"] as Provider[]).map((p) => (
+              <TouchableOpacity
+                key={p}
+                onPress={() => setActiveProvider(p)}
+                style={[
+                  styles.providerButton,
+                  {
+                    borderColor: activeProvider === p ? providerColor : theme.border,
+                    backgroundColor: activeProvider === p ? `${providerColor}15` : "transparent",
+                  },
+                ]}
+                activeOpacity={0.7}
+              >
+                <Feather
+                  name={p === "gemini" ? "zap" : "wind"}
+                  size={16}
+                  color={activeProvider === p ? providerColor : theme.textSecondary}
+                />
+                <ThemedText
+                  style={[
+                    styles.providerButtonText,
+                    { color: activeProvider === p ? providerColor : theme.textSecondary },
+                  ]}
+                >
+                  {p === "gemini" ? "Google Gemini" : "Mistral AI"}
+                </ThemedText>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* --- Gemini Settings --- */}
+        {activeProvider === "gemini" && (
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            style={[styles.card, { backgroundColor: theme.backgroundDefault, borderColor: theme.cardBorder }]}
+          >
+            <View style={styles.cardHeader}>
+              <Feather name="key" size={24} color={theme.link} />
+              <ThemedText style={[styles.cardTitle, { fontFamily: "Inter_600SemiBold" }]}>
+                Gemini API Key
+              </ThemedText>
+            </View>
+
+            <ThemedText style={[styles.description, { color: theme.textSecondary }]}>
+              Get your key from Google AI Studio (aistudio.google.com).
+            </ThemedText>
+
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.inputBackground, color: theme.text, fontFamily: "Inter_400Regular" }]}
+                placeholder="Enter your Gemini API key"
+                placeholderTextColor={theme.textSecondary}
+                value={geminiKey}
+                onChangeText={setGeminiKey}
+                secureTextEntry={!showGeminiKey}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="input-gemini-key"
+              />
+              <TouchableOpacity onPress={() => setShowGeminiKey(!showGeminiKey)} style={styles.eyeButton}>
+                <Feather name={showGeminiKey ? "eye-off" : "eye"} size={20} color={theme.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ThemedText style={[styles.fieldLabel, { color: theme.textSecondary }]}>Model Name</ThemedText>
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.inputBackground, color: theme.text, fontFamily: "Inter_400Regular" }]}
+                placeholder="e.g. gemini-2.5-flash"
+                placeholderTextColor={theme.textSecondary}
+                value={geminiModel}
+                onChangeText={setGeminiModel}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="input-gemini-model"
+              />
+            </View>
+          </Animated.View>
+        )}
+
+        {/* --- Mistral Settings --- */}
+        {activeProvider === "mistral" && (
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            style={[styles.card, { backgroundColor: theme.backgroundDefault, borderColor: theme.cardBorder }]}
+          >
+            <View style={styles.cardHeader}>
+              <Feather name="key" size={24} color="#FF7000" />
+              <ThemedText style={[styles.cardTitle, { fontFamily: "Inter_600SemiBold" }]}>
+                Mistral API Key
+              </ThemedText>
+            </View>
+
+            <ThemedText style={[styles.description, { color: theme.textSecondary }]}>
+              Get your key from console.mistral.ai.
+            </ThemedText>
+
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.inputBackground, color: theme.text, fontFamily: "Inter_400Regular" }]}
+                placeholder="Enter your Mistral API key"
+                placeholderTextColor={theme.textSecondary}
+                value={mistralKey}
+                onChangeText={setMistralKey}
+                secureTextEntry={!showMistralKey}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="input-mistral-key"
+              />
+              <TouchableOpacity onPress={() => setShowMistralKey(!showMistralKey)} style={styles.eyeButton}>
+                <Feather name={showMistralKey ? "eye-off" : "eye"} size={20} color={theme.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ThemedText style={[styles.fieldLabel, { color: theme.textSecondary }]}>Model Name</ThemedText>
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.inputBackground, color: theme.text, fontFamily: "Inter_400Regular" }]}
+                placeholder="e.g. mistral-large-latest"
+                placeholderTextColor={theme.textSecondary}
+                value={mistralModel}
+                onChangeText={setMistralModel}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="input-mistral-model"
+              />
+            </View>
+          </Animated.View>
+        )}
+
+        {/* --- Save Result --- */}
+        {testResult && (
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            style={[
+              styles.resultContainer,
+              { backgroundColor: testResult.success ? `${theme.success}15` : `${theme.error}15` },
+            ]}
+          >
+            <Feather
+              name={testResult.success ? "check-circle" : "alert-circle"}
+              size={18}
+              color={testResult.success ? theme.success : theme.error}
             />
-            <TouchableOpacity
-              onPress={() => setShowKey(!showKey)}
-              style={styles.eyeButton}
-              activeOpacity={0.7}
-            >
-              <Feather
-                name={showKey ? "eye-off" : "eye"}
-                size={20}
-                color={theme.textSecondary}
-              />
-            </TouchableOpacity>
-          </View>
+            <ThemedText style={[styles.resultText, { color: testResult.success ? theme.success : theme.error }]}>
+              {testResult.message}
+            </ThemedText>
+          </Animated.View>
+        )}
 
-          {validationError && (
-            <Animated.View
-              entering={FadeIn.duration(200)}
-              style={[
-                styles.validationErrorContainer,
-                {
-                  backgroundColor: `${theme.error}15`,
-                },
-              ]}
-            >
-              <Feather
-                name="alert-circle"
-                size={18}
-                color={theme.error}
-              />
-              <ThemedText
-                style={[
-                  styles.validationErrorText,
-                  { color: theme.error },
-                ]}
-              >
-                {validationError}
-              </ThemedText>
-            </Animated.View>
-          )}
-
-          {testResult ? (
-            <Animated.View
-              entering={FadeIn.duration(200)}
-              style={[
-                styles.resultContainer,
-                {
-                  backgroundColor: testResult.success
-                    ? `${theme.success}15`
-                    : `${theme.error}15`,
-                },
-              ]}
-            >
-              <Feather
-                name={testResult.success ? "check-circle" : "alert-circle"}
-                size={18}
-                color={testResult.success ? theme.success : theme.error}
-              />
-              <ThemedText
-                style={[
-                  styles.resultText,
-                  { color: testResult.success ? theme.success : theme.error },
-                ]}
-              >
-                {testResult.message}
-              </ThemedText>
-            </Animated.View>
-          ) : null}
-
-          <View style={styles.buttonRow}>
-            <TouchableOpacity
-              onPress={handleTest}
-              disabled={isTesting || !inputValue.trim() || !!validationError}
-              style={[
-                styles.secondaryButton,
-                {
-                  borderColor: theme.link,
-                  opacity: isTesting || !inputValue.trim() || !!validationError ? 0.5 : 1,
-                },
-              ]}
-              activeOpacity={0.7}
-              testID="button-test"
-            >
-              {isTesting ? (
-                <ActivityIndicator size="small" color={theme.link} />
-              ) : (
-                <Feather name="zap" size={18} color={theme.link} />
-              )}
-              <ThemedText style={[styles.secondaryButtonText, { color: theme.link }]}>
-                Test Connection
-              </ThemedText>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={handleSave}
-              disabled={isSaving || !inputValue.trim() || !!validationError}
-              style={[
-                styles.primaryButton,
-                {
-                  backgroundColor: theme.link,
-                  opacity: isSaving || !inputValue.trim() || !!validationError ? 0.5 : 1,
-                },
-                Shadows.button,
-              ]}
-              activeOpacity={0.7}
-              testID="button-save"
-            >
-              {isSaving ? (
-                <ActivityIndicator size="small" color={theme.buttonText} />
-              ) : (
-                <Feather name="save" size={18} color={theme.buttonText} />
-              )}
-              <ThemedText
-                style={[styles.primaryButtonText, { color: theme.buttonText }]}
-              >
-                Save Key
-              </ThemedText>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View
+        {/* --- Save Button --- */}
+        <TouchableOpacity
+          onPress={handleSave}
+          disabled={isSaving}
           style={[
-            styles.infoCard,
-            {
-              backgroundColor: `${theme.accent}20`,
-              borderColor: theme.accent,
-            },
+            styles.saveButton,
+            { backgroundColor: providerColor, opacity: isSaving ? 0.5 : 1 },
+            Shadows.button,
           ]}
+          activeOpacity={0.7}
+          testID="button-save"
         >
-          <Feather name="info" size={20} color={theme.accent} />
-          <View style={styles.infoContent}>
-            <ThemedText
-              style={[styles.infoTitle, { fontFamily: "Inter_600SemiBold" }]}
-            >
-              How to get an API key
-            </ThemedText>
-            <ThemedText style={[styles.infoText, { color: theme.textSecondary }]}>
-              1. Visit Google AI Studio (aistudio.google.com){"\n"}
-              2. Sign in with your Google account{"\n"}
-              3. Click "Get API key" and create a new key{"\n"}
-              4. Copy the key and paste it above
-            </ThemedText>
-          </View>
-        </View>
+          {isSaving ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Feather name="save" size={18} color="#FFFFFF" />
+          )}
+          <ThemedText style={styles.saveButtonText}>Save Settings</ThemedText>
+        </TouchableOpacity>
       </KeyboardAwareScrollViewCompat>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  loadingContainer: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  container: { flex: 1 },
+  loadingContainer: { justifyContent: "center", alignItems: "center" },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -382,26 +355,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.md,
   },
-  headerButton: {
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerTitle: {
-    fontSize: 20,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: Spacing.lg,
-  },
+  headerButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  headerTitle: { fontSize: 20 },
+  scrollView: { flex: 1 },
+  scrollContent: { padding: Spacing.lg, gap: Spacing.md },
   card: {
     borderRadius: BorderRadius.md,
     borderWidth: 1,
     padding: Spacing.xl,
-    marginBottom: Spacing.lg,
   },
   cardHeader: {
     flexDirection: "row",
@@ -409,18 +370,25 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
     gap: Spacing.sm,
   },
-  cardTitle: {
-    fontSize: 18,
+  cardTitle: { fontSize: 18 },
+  description: { fontSize: 14, lineHeight: 22, marginBottom: Spacing.lg },
+  fieldLabel: { fontSize: 13, marginBottom: Spacing.sm, fontWeight: "500" },
+  providerToggleRow: {
+    flexDirection: "row",
+    gap: Spacing.md,
   },
-  description: {
-    fontSize: 14,
-    lineHeight: 22,
-    marginBottom: Spacing.lg,
+  providerButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.xs,
+    borderWidth: 1.5,
+    gap: Spacing.sm,
   },
-  inputContainer: {
-    position: "relative",
-    marginBottom: Spacing.lg,
-  },
+  providerButtonText: { fontSize: 13, fontWeight: "600" },
+  inputContainer: { position: "relative", marginBottom: Spacing.lg },
   input: {
     height: 52,
     borderRadius: BorderRadius.xs,
@@ -437,77 +405,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: Spacing.sm,
   },
-  validationErrorContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: Spacing.md,
-    borderRadius: BorderRadius.xs,
-    marginBottom: Spacing.md,
-    gap: Spacing.sm,
-  },
-  validationErrorText: {
-    fontSize: 14,
-    flex: 1,
-  },
   resultContainer: {
     flexDirection: "row",
     alignItems: "center",
     padding: Spacing.md,
     borderRadius: BorderRadius.xs,
-    marginBottom: Spacing.lg,
     gap: Spacing.sm,
   },
-  resultText: {
-    fontSize: 14,
-    flex: 1,
-  },
-  buttonRow: {
-    flexDirection: "row",
-    gap: Spacing.md,
-  },
-  secondaryButton: {
-    flex: 1,
+  resultText: { fontSize: 14, flex: 1 },
+  saveButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.xs,
-    borderWidth: 1.5,
-    gap: Spacing.sm,
-  },
-  secondaryButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  primaryButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.lg,
     borderRadius: BorderRadius.xs,
     gap: Spacing.sm,
   },
-  primaryButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  infoCard: {
-    flexDirection: "row",
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    padding: Spacing.lg,
-    gap: Spacing.md,
-  },
-  infoContent: {
-    flex: 1,
-  },
-  infoTitle: {
-    fontSize: 15,
-    marginBottom: Spacing.sm,
-  },
-  infoText: {
-    fontSize: 13,
-    lineHeight: 22,
-  },
+  saveButtonText: { fontSize: 15, fontWeight: "700", color: "#FFFFFF" },
 });
